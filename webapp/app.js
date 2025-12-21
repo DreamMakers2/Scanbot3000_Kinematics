@@ -36,23 +36,23 @@ const viewCubeRaycaster = new THREE.Raycaster();
 const viewCubePointer = new THREE.Vector2();
 const axisViewDirection = new THREE.Vector3();
 
-const perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-const orthoSize = 80;
+const perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 10000);
+const orthoSize = 800;
 const orthographicCamera = new THREE.OrthographicCamera(
   -orthoSize,
   orthoSize,
   orthoSize,
   -orthoSize,
   0.1,
-  1000
+  10000
 );
 let camera = perspectiveCamera;
 
 const orbit = {
-  radius: 180,
-  theta: -Math.PI / 3,
-  phi: Math.PI / 7,
-  target: new THREE.Vector3(10, 18, 0),
+  radius: 839.7430400525388,
+  theta: THREE.MathUtils.degToRad(134.4),
+  phi: THREE.MathUtils.degToRad(14.9),
+  target: new THREE.Vector3(85.88210895080977, 160.27452657907472, 0),
   isDragging: false,
   isPanning: false,
   startX: 0,
@@ -150,7 +150,7 @@ function updateKeyMovement(delta) {
   if (move.lengthSq() === 0) {
     return;
   }
-  const speed = camera === orthographicCamera ? 20 / orthographicCamera.zoom : 25;
+  const speed = camera === orthographicCamera ? 200 / orthographicCamera.zoom : 250;
   move.normalize().multiplyScalar(speed * delta);
   orbit.target.add(move);
   updateCamera();
@@ -171,7 +171,7 @@ function panCamera(dx, dy) {
   camera.getWorldDirection(forward);
   const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
   const up = new THREE.Vector3().copy(camera.up).normalize();
-  const scale = camera === orthographicCamera ? 0.6 / orthographicCamera.zoom : orbit.radius * 0.002;
+  const scale = camera === orthographicCamera ? 6 / orthographicCamera.zoom : orbit.radius * 0.002;
   const offset = new THREE.Vector3()
     .addScaledVector(right, -dx * scale)
     .addScaledVector(up, dy * scale);
@@ -212,7 +212,7 @@ function createFloorGradientTexture() {
   return texture;
 }
 
-const floorSize = 240;
+const floorSize = 2400;
 const floorGradient = new THREE.Mesh(
   new THREE.PlaneGeometry(floorSize, floorSize),
   new THREE.MeshBasicMaterial({
@@ -238,12 +238,14 @@ const rAxisColor = 0x2c7be5;
 const labelLineColor = 0x111111;
 const x0 = 0;
 const y0 = 0;
-const x1 = 40;
-const yAxisLength = 40;
-const xAxisLength = 60;
-const armLength = 8;
-const axisThickness = 1.6;
-const floorOffset = -axisThickness / 2;
+const baseOffset = -34;
+const x1 = 400;
+const yAxisLength = 400;
+const xAxisLength = 600;
+const armLength = 80;
+const axisThickness = 16;
+const scanOrigin = new THREE.Vector3(x0, 27, 0);
+const floorOffset = baseOffset - axisThickness / 2;
 floorGradient.position.y = floorOffset;
 floorGrid.position.y = floorOffset;
 
@@ -461,7 +463,7 @@ const baseFrameTube = new THREE.Mesh(
   new THREE.BoxGeometry(x1 - x0, axisThickness, axisThickness),
   baseFrameMaterial
 );
-baseFrameTube.position.set((x0 + x1) / 2, y0, 0);
+baseFrameTube.position.set((x0 + x1) / 2, baseOffset, 0);
 scene.add(baseFrameTube);
 
 const yAxisMaterial = new THREE.MeshStandardMaterial({
@@ -483,7 +485,7 @@ const verticalAxis = new THREE.Mesh(
   new THREE.BoxGeometry(axisThickness, yAxisLength, axisThickness),
   yAxisMaterial
 );
-verticalAxis.position.set(x1, yAxisLength / 2, 0);
+verticalAxis.position.set(x1, baseOffset + yAxisLength / 2, 0);
 scene.add(verticalAxis);
 
 const sphereMaterial = new THREE.MeshStandardMaterial({
@@ -491,17 +493,17 @@ const sphereMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.4,
   metalness: 0.1,
 });
-const anchorGeometry = new THREE.SphereGeometry(1.2, 18, 18);
+const anchorGeometry = new THREE.SphereGeometry(12, 18, 18);
 const originMarker = new THREE.Mesh(anchorGeometry, sphereMaterial);
 originMarker.position.set(0, 0, 0);
 scene.add(originMarker);
 const stageMarker = new THREE.Mesh(anchorGeometry, sphereMaterial);
-stageMarker.position.set(x1, 0, 0);
+stageMarker.position.set(x1, baseOffset, 0);
 scene.add(stageMarker);
 
-const discRadius = 20;
-const discThickness = 0.8;
-const discCenter = new THREE.Vector3(0, 3, 0);
+const discRadius = 200;
+const discThickness = 8;
+const discCenter = new THREE.Vector3(0, -4, 0);
 const discTopY = discCenter.y + discThickness / 2;
 const disc = new THREE.Mesh(
   new THREE.CylinderGeometry(discRadius, discRadius, discThickness, 80),
@@ -515,23 +517,34 @@ const disc = new THREE.Mesh(
 disc.position.copy(discCenter);
 scene.add(disc);
 const discTopMarker = new THREE.Mesh(
-  new THREE.SphereGeometry(0.7, 16, 16),
+  new THREE.SphereGeometry(7, 16, 16),
   sphereMaterial
 );
 discTopMarker.position.set(discCenter.x, discTopY, discCenter.z);
 scene.add(discTopMarker);
 
+const scanOriginMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(9, 16, 16),
+  new THREE.MeshStandardMaterial({
+    color: 0xffd200,
+    roughness: 0.35,
+    metalness: 0.1,
+  })
+);
+scanOriginMarker.position.copy(scanOrigin);
+scene.add(scanOriginMarker);
+
 const rotationIndicatorLength = discRadius * 0.9;
 const rotationLine = makeLine(rAxisColor);
 scene.add(rotationLine.line);
 const rotationTip = new THREE.Mesh(
-  new THREE.SphereGeometry(1.1, 16, 16),
+  new THREE.SphereGeometry(11, 16, 16),
   sphereMaterial
 );
 scene.add(rotationTip);
 
 const movablePoint = new THREE.Mesh(
-  new THREE.SphereGeometry(1.5, 20, 20),
+  new THREE.SphereGeometry(15, 20, 20),
   sphereMaterial
 );
 scene.add(movablePoint);
@@ -542,7 +555,7 @@ const xAxisTube = new THREE.Mesh(
 );
 scene.add(xAxisTube);
 const xAxisLeftPoint = new THREE.Mesh(
-  new THREE.SphereGeometry(1.3, 18, 18),
+  new THREE.SphereGeometry(13, 18, 18),
   sphereMaterial
 );
 scene.add(xAxisLeftPoint);
@@ -583,7 +596,7 @@ function createLabel(text, options = {}) {
     fontSize,
     padding,
     color: options.color || "#1f2a2a",
-    scale: options.scale || 1.5,
+    scale: options.scale || 15,
     backgroundAlpha: options.backgroundAlpha ?? 0.8,
     text: "",
   };
@@ -659,7 +672,7 @@ function formatCoord(position) {
 function addCoordLabel(name, target, offset, options = {}) {
   const label = createLabel(`${name} ${formatCoord(target.position)}`, {
     color: options.color || "#0d0f12",
-    scale: options.scale || 1.2,
+    scale: options.scale || 12,
   });
   label.position.copy(target.position).add(offset);
   coordLabelGroup.add(label);
@@ -687,22 +700,22 @@ function updateCoordLabels() {
   coordLabels.forEach(updateCoordLabel);
 }
 
-addCoordLabel("Origin", originMarker, new THREE.Vector3(-10, 4, -8));
-addCoordLabel("Stage", stageMarker, new THREE.Vector3(8, 4, -8));
-addCoordLabel("Slider", movablePoint, new THREE.Vector3(8, 4, 6));
-addCoordLabel("Joint", xAxisLeftPoint, new THREE.Vector3(-8, 4, 6));
-addCoordLabel("Disc", discTopMarker, new THREE.Vector3(6, 4, 0));
+addCoordLabel("Stage", stageMarker, new THREE.Vector3(80, 40, -80));
+addCoordLabel("Slider", movablePoint, new THREE.Vector3(80, 40, 60));
+addCoordLabel("Joint", xAxisLeftPoint, new THREE.Vector3(-80, 40, 60));
+addCoordLabel("Disc", discTopMarker, new THREE.Vector3(60, 40, 0));
+addCoordLabel("Scan Origin", scanOriginMarker, new THREE.Vector3(60, 40, 60));
 
-labels.base.position.set(x1 - 6, y0 + 3.5, -4);
-labels.yAxis.position.set(x1 + 4, yAxisLength - 2, 4);
-labels.rAxis.position.set(discCenter.x + discRadius * 0.7, discTopY + 3.5, 4);
+labels.base.position.set(x1 - 60, baseOffset + 35, -40);
+labels.yAxis.position.set(x1 + 40, baseOffset + yAxisLength - 20, 40);
+labels.rAxis.position.set(discCenter.x + discRadius * 0.7, discTopY + 35, 40);
 setLine(
   labelLines.base,
   labels.base.position.x,
   labels.base.position.y,
   labels.base.position.z,
   x1,
-  y0,
+  baseOffset,
   0
 );
 setLine(
@@ -711,7 +724,7 @@ setLine(
   labels.yAxis.position.y,
   labels.yAxis.position.z,
   x1,
-  yAxisLength,
+  baseOffset + yAxisLength,
   0
 );
 setLine(
@@ -726,8 +739,8 @@ setLine(
 
 function updateLabelPositions(xLeft, xRight, yVal, armEndX, armEndY) {
   const xLabelAnchor = xLeft + (xAxisLength * 2) / 3;
-  labels.xAxis.position.set(xLabelAnchor + 2, yVal + 3.5, 4);
-  labels.pAxis.position.set((xLeft + armEndX) / 2 + 2, (yVal + armEndY) / 2 + 3.5, 4);
+  labels.xAxis.position.set(xLabelAnchor + 20, yVal + 35, 40);
+  labels.pAxis.position.set((xLeft + armEndX) / 2 + 20, (yVal + armEndY) / 2 + 35, 40);
   setLine(
     labelLines.xAxis,
     labels.xAxis.position.x,
@@ -791,11 +804,13 @@ function angleToDeflection(angle) {
 }
 
 function angleToOrigin(xLeft, yVal) {
-  return THREE.MathUtils.radToDeg(Math.atan2(y0 - yVal, x0 - xLeft));
+  return THREE.MathUtils.radToDeg(
+    Math.atan2(scanOrigin.y - yVal, scanOrigin.x - xLeft)
+  );
 }
 
-function updateOutputs(yVal, xLeft, pVal, rVal) {
-  yAxisVal.textContent = yVal.toFixed(1);
+function updateOutputs(yDisplay, xLeft, pVal, rVal) {
+  yAxisVal.textContent = yDisplay.toFixed(1);
   xAxisVal.textContent = xLeft.toFixed(1);
   const pDisplay = (-pVal / 90) * 255;
   pAxisVal.textContent = pDisplay.toFixed(0);
@@ -805,10 +820,11 @@ function updateOutputs(yVal, xLeft, pVal, rVal) {
 function updateScene() {
   const yVal = parseFloat(yAxisInput.value);
   const xLeft = parseFloat(xAxisInput.value);
+  const yActual = yVal + baseOffset;
   let pVal = parseFloat(pAxisInput.value);
 
   if (lockOriginInput.checked) {
-    const desiredAngle = angleToOrigin(xLeft, yVal);
+    const desiredAngle = angleToOrigin(xLeft, yActual);
     const desiredDeflection = angleToDeflection(desiredAngle);
     pVal = desiredDeflection;
     pAxisInput.value = desiredDeflection.toFixed(1);
@@ -818,18 +834,18 @@ function updateScene() {
   const angleRad = THREE.MathUtils.degToRad(angleDeg);
   const rVal = parseFloat(rAxisInput.value);
 
-  updateOutputs(yVal, xLeft, pVal, rVal);
+  updateOutputs(yActual, xLeft, pVal, rVal);
 
   const xRight = xLeft + xAxisLength;
   const armEndX = xLeft + armLength * Math.cos(angleRad);
-  const armEndY = yVal + armLength * Math.sin(angleRad);
+  const armEndY = yActual + armLength * Math.sin(angleRad);
 
-  movablePoint.position.set(x1, yVal, 0);
-  xAxisLeftPoint.position.set(xLeft, yVal, 0);
-  xAxisTube.position.set((xLeft + xRight) / 2, yVal, 0);
-  armTube.position.set((xLeft + armEndX) / 2, (yVal + armEndY) / 2, 0);
+  movablePoint.position.set(x1, yActual, 0);
+  xAxisLeftPoint.position.set(xLeft, yActual, 0);
+  xAxisTube.position.set((xLeft + xRight) / 2, yActual, 0);
+  armTube.position.set((xLeft + armEndX) / 2, (yActual + armEndY) / 2, 0);
   armTube.rotation.set(0, 0, angleRad);
-  updateLabelPositions(xLeft, xRight, yVal, armEndX, armEndY);
+  updateLabelPositions(xLeft, xRight, yActual, armEndX, armEndY);
 
   const rotationRad = THREE.MathUtils.degToRad(rVal);
   const arrowEndX = discCenter.x + rotationIndicatorLength * Math.cos(rotationRad);
@@ -930,7 +946,7 @@ function onWheel(event) {
     orthographicCamera.updateProjectionMatrix();
     return;
   }
-  orbit.radius = clamp(orbit.radius + event.deltaY * 0.2, 80, 400);
+  orbit.radius = clamp(orbit.radius + event.deltaY * 0.2, 800, 4000);
   updateCamera();
 }
 
