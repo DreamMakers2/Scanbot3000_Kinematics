@@ -184,7 +184,7 @@ output {
 .axis-indicator {
   position: fixed;
   top: 8px;
-  left: 8px;
+  left: 0;
   width: 540px;
   height: 540px;
   border-radius: 0;
@@ -206,7 +206,7 @@ output {
   position: absolute;
   top: 24px;
   right: 32px;
-  width: 270px;
+  width: 240px;
   padding: 12px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.4);
@@ -221,8 +221,8 @@ output {
 }
 
 #viewCube {
-  width: 190px;
-  height: 190px;
+  width: 170px;
+  height: 170px;
   display: block;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.2);
@@ -241,7 +241,8 @@ output {
 
 .view-readout {
   position: absolute;
-  right: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 24px;
   padding: 6px 10px;
   border-radius: 10px;
@@ -253,7 +254,12 @@ output {
   letter-spacing: 0.02em;
   backdrop-filter: blur(6px);
   z-index: 2;
-  pointer-events: none;
+  cursor: pointer;
+}
+
+.view-readout.copied {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(31, 42, 42, 0.2);
 }
 
 .viewcube-controls select {
@@ -322,7 +328,7 @@ output {
 
   .axis-indicator {
     top: 8px;
-    left: 8px;
+    left: 0;
     width: 405px;
     height: 405px;
   }
@@ -330,12 +336,12 @@ output {
   .viewcube-panel {
     top: 16px;
     right: 16px;
-    width: 220px;
+    width: 200px;
   }
 
   #viewCube {
-    width: 150px;
-    height: 150px;
+    width: 140px;
+    height: 140px;
   }
 
   .view-readout {
@@ -356,17 +362,17 @@ output {
 
   .axis-indicator {
     top: 8px;
-    left: 8px;
+    left: 0;
     width: 315px;
     height: 315px;
   }
 
   .viewcube-panel {
-    width: 180px;
+    width: 170px;
   }
 
   #viewCube {
-    width: 120px;
-    height: 120px;
+    width: 110px;
+    height: 110px;
   }
 }

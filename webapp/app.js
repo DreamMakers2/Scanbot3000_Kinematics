@@ -656,8 +656,8 @@ function formatCoord(position) {
   return `X:${position.x.toFixed(1)} Y:${position.y.toFixed(1)}`;
 }
 
-function addCoordLabel(target, offset, options = {}) {
-  const label = createLabel(formatCoord(target.position), {
+function addCoordLabel(name, target, offset, options = {}) {
+  const label = createLabel(`${name} ${formatCoord(target.position)}`, {
     color: options.color || "#0d0f12",
     scale: options.scale || 1.2,
   });
@@ -669,7 +669,7 @@ function addCoordLabel(target, offset, options = {}) {
   line.line.material.opacity = 0.5;
   coordLineGroup.add(line.line);
 
-  const entry = { target, offset: offset.clone(), label, line };
+  const entry = { name, target, offset: offset.clone(), label, line };
   coordLabels.push(entry);
   updateCoordLabel(entry);
   return entry;
@@ -680,18 +680,18 @@ function updateCoordLabel(entry) {
   const labelPos = pos.clone().add(entry.offset);
   entry.label.position.copy(labelPos);
   setLine(entry.line, labelPos.x, labelPos.y, labelPos.z, pos.x, pos.y, pos.z);
-  updateLabelText(entry.label, formatCoord(pos));
+  updateLabelText(entry.label, `${entry.name} ${formatCoord(pos)}`);
 }
 
 function updateCoordLabels() {
   coordLabels.forEach(updateCoordLabel);
 }
 
-addCoordLabel(originMarker, new THREE.Vector3(-10, 4, -8));
-addCoordLabel(stageMarker, new THREE.Vector3(8, 4, -8));
-addCoordLabel(movablePoint, new THREE.Vector3(8, 4, 6));
-addCoordLabel(xAxisLeftPoint, new THREE.Vector3(-8, 4, 6));
-addCoordLabel(discTopMarker, new THREE.Vector3(6, 4, 0));
+addCoordLabel("Origin", originMarker, new THREE.Vector3(-10, 4, -8));
+addCoordLabel("Stage", stageMarker, new THREE.Vector3(8, 4, -8));
+addCoordLabel("Slider", movablePoint, new THREE.Vector3(8, 4, 6));
+addCoordLabel("Joint", xAxisLeftPoint, new THREE.Vector3(-8, 4, 6));
+addCoordLabel("Disc", discTopMarker, new THREE.Vector3(6, 4, 0));
 
 labels.base.position.set(x1 - 6, y0 + 3.5, -4);
 labels.yAxis.position.set(x1 + 4, yAxisLength - 2, 4);
@@ -978,6 +978,29 @@ if (cameraModeSelect) {
     handleResize();
   });
   setCameraMode(cameraModeSelect.value);
+}
+
+if (viewReadout) {
+  viewReadout.addEventListener("click", async () => {
+    const text = viewReadout.textContent || "";
+    if (!text) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      viewReadout.classList.add("copied");
+      setTimeout(() => viewReadout.classList.remove("copied"), 800);
+    } catch (err) {
+      const temp = document.createElement("textarea");
+      temp.value = text;
+      temp.style.position = "fixed";
+      temp.style.opacity = "0";
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand("copy");
+      document.body.removeChild(temp);
+    }
+  });
 }
 
 window.addEventListener("keydown", (event) => {
