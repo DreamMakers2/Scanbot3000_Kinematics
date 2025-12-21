@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scanbot3000 Kinematics</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Space+Grotesk:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="hero">
+        <div class="title">Scanbot3000 Kinematics</div>
+        <div class="subtitle">
+          Live 3D sketch of the linear stage, arm deflection, and rotation
+          indicator.
+        </div>
+      </header>
+      <div class="viewport">
+        <canvas id="scene"></canvas>
+        <div class="hud">
+          <div class="hud-title">Controls</div>
+          <div class="control">
+            <label for="yAxis">Y-axis (linear stage)</label>
+            <div class="control-row">
+              <input id="yAxis" type="range" min="0" max="40" value="20" step="0.1" />
+              <output id="yAxisVal">20.0</output>
+            </div>
+          </div>
+          <div class="control">
+            <label for="xAxis">X-axis (base position)</label>
+            <div class="control-row">
+              <input id="xAxis" type="range" min="-20" max="40" value="10" step="0.1" />
+              <output id="xAxisVal">10.0</output>
+            </div>
+          </div>
+          <div class="control">
+            <label for="pAxis">P-axis (arm deflection)</label>
+            <div class="control-row">
+              <input id="pAxis" type="range" min="-90" max="90" value="0" step="0.1" />
+              <output id="pAxisVal">0.0</output>
+            </div>
+          </div>
+          <div class="control">
+            <label for="rAxis">R-axis (rotation)</label>
+            <div class="control-row">
+              <input id="rAxis" type="range" min="0" max="360" value="0" step="1" />
+              <output id="rAxisVal">0</output>
+            </div>
+          </div>
+          <div class="toggle">
+            <input id="lockOrigin" type="checkbox" />
+            <label for="lockOrigin">Lock to origin</label>
+          </div>
+          <div class="toggle">
+            <input id="toggleLabels" type="checkbox" checked />
+            <label for="toggleLabels">Show axis labels</label>
+          </div>
+        </div>
+        <div class="legend">
+          <div class="legend-item">
+            <span class="swatch base"></span>
+            Base frame
+          </div>
+          <div class="legend-item">
+            <span class="swatch y-axis"></span>
+            Y-axis
+          </div>
+          <div class="legend-item">
+            <span class="swatch axis"></span>
+            X-axis
+          </div>
+          <div class="legend-item">
+            <span class="swatch arm"></span>
+            P-axis
+          </div>
+          <div class="legend-item">
+            <span class="swatch spin"></span>
+            R-axis
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

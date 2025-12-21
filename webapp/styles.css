@@ -1,0 +1,239 @@
+:root {
+  --ink: #1f2a2a;
+  --ink-strong: #0c1414;
+  --muted: #516060;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-border: rgba(255, 255, 255, 0.6);
+  --accent: #ef7d3c;
+  --accent-2: #0f7c9c;
+  --accent-3: #4cb06f;
+  --base-line: #0d0f12;
+  --axis-line: #2ecc71;
+  --y-axis-line: #e74c3c;
+  --arm-line: #8e44ad;
+  --spin-line: #2c7be5;
+  --bg-1: #f6f1e8;
+  --bg-2: #d7e6df;
+  --bg-3: #f2dcc6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(242, 220, 198, 0.9), transparent 45%),
+    radial-gradient(circle at 85% 10%, rgba(173, 215, 224, 0.75), transparent 48%),
+    linear-gradient(135deg, var(--bg-1), var(--bg-2));
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.hero {
+  padding: 24px 32px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.title {
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  color: var(--muted);
+  max-width: 720px;
+  font-size: 14px;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  padding: 16px 16px 28px;
+  min-height: 0;
+}
+
+#scene {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 24px 40px rgba(31, 42, 42, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.hud {
+  position: absolute;
+  left: 32px;
+  bottom: 32px;
+  width: min(340px, 90%);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 20px 40px rgba(31, 42, 42, 0.12);
+}
+
+.hud-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.control {
+  margin-bottom: 12px;
+}
+
+.control label {
+  display: block;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.control input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+output {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--ink-strong);
+  background: rgba(255, 255, 255, 0.75);
+  padding: 4px 6px;
+  border-radius: 6px;
+  min-width: 52px;
+  text-align: right;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.toggle + .toggle {
+  margin-top: 6px;
+}
+
+.toggle input {
+  accent-color: var(--accent-2);
+  width: 16px;
+  height: 16px;
+}
+
+.legend {
+  position: absolute;
+  top: 24px;
+  right: 32px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 10px 18px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-size: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.swatch.base {
+  background: var(--base-line);
+}
+
+.swatch.axis {
+  background: var(--axis-line);
+}
+
+.swatch.y-axis {
+  background: var(--y-axis-line);
+}
+
+.swatch.arm {
+  background: var(--arm-line);
+}
+
+.swatch.spin {
+  background: var(--spin-line);
+}
+
+@media (max-width: 900px) {
+  .hero {
+    padding: 20px 20px 0;
+  }
+
+  .viewport {
+    padding: 16px;
+  }
+
+  .hud {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+  }
+
+  .legend {
+    left: 16px;
+    right: 16px;
+    top: 16px;
+    border-radius: 16px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 600px) {
+  .legend {
+    gap: 8px 16px;
+  }
+
+  .hud {
+    padding: 14px;
+  }
+}
