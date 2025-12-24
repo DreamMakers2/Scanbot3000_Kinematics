@@ -48,20 +48,26 @@
           </div>
           <div class="hud">
             <div class="hud-title">Controls</div>
-            <div class="control">
-              <label for="yAxis">Y-axis (linear stage)</label>
-              <div class="control-row">
-              <input id="yAxis" type="range" min="0" max="400" value="200" step="0.1" />
-              <output id="yAxisVal">200.0</output>
+          <div class="control">
+            <label for="yAxis">Y-axis (linear stage)</label>
+            <div class="control-row">
+              <input id="yAxis" type="range" min="27" max="305" value="200" step="0.1" />
+              <div class="value-pair">
+                <output id="yAxisVal">200.0</output>
+                <span class="pos">pos <output id="yPosVal">-4375.0</output></span>
               </div>
             </div>
-            <div class="control">
-              <label for="xAxis">X-axis (base position)</label>
-              <div class="control-row">
-              <input id="xAxis" type="range" min="-200" max="400" value="100" step="0.1" />
-              <output id="xAxisVal">100.0</output>
+          </div>
+          <div class="control">
+            <label for="xAxis">X-axis (base position)</label>
+            <div class="control-row">
+              <input id="xAxis" type="range" min="0" max="333" value="100" step="0.1" />
+              <div class="value-pair">
+                <output id="xAxisVal">100.0</output>
+                <span class="pos">pos <output id="xPosVal">1165.0</output></span>
               </div>
             </div>
+          </div>
             <div class="control">
               <label for="pAxis">P-axis (arm deflection)</label>
               <div class="control-row">

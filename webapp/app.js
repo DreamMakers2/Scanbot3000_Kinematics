@@ -773,6 +773,8 @@ const yAxisVal = document.getElementById("yAxisVal");
 const xAxisVal = document.getElementById("xAxisVal");
 const pAxisVal = document.getElementById("pAxisVal");
 const rAxisVal = document.getElementById("rAxisVal");
+const yPosVal = document.getElementById("yPosVal");
+const xPosVal = document.getElementById("xPosVal");
 
 if (labelsToggleInput) {
   axisLabelGroup.visible = labelsToggleInput.checked;
@@ -815,12 +817,20 @@ function updateOutputs(yDisplay, xLeft, pVal, rVal) {
   const pDisplay = (-pVal / 90) * 255;
   pAxisVal.textContent = pDisplay.toFixed(0);
   rAxisVal.textContent = rVal.toFixed(0);
+  if (yPosVal) {
+    const posY = 625 - 25 * yDisplay;
+    yPosVal.textContent = posY.toFixed(1);
+  }
+  if (xPosVal) {
+    const posX = 1665 - 5 * xLeft;
+    xPosVal.textContent = posX.toFixed(1);
+  }
 }
 
 function updateScene() {
   const yVal = parseFloat(yAxisInput.value);
   const xLeft = parseFloat(xAxisInput.value);
-  const yActual = yVal + baseOffset;
+  const yActual = yVal;
   let pVal = parseFloat(pAxisInput.value);
 
   if (lockOriginInput.checked) {
