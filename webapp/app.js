@@ -35,6 +35,13 @@ let viewCubeLabels = [];
 const viewCubeRaycaster = new THREE.Raycaster();
 const viewCubePointer = new THREE.Vector2();
 const axisViewDirection = new THREE.Vector3();
+const dragRaycaster = new THREE.Raycaster();
+const dragPointer = new THREE.Vector2();
+const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const dragState = {
+  active: false,
+  type: null,
+};
 
 const perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 10000);
 const orthoSize = 800;
@@ -65,6 +72,17 @@ const orbit = {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function clampInputValue(value, inputEl) {
+  const min = parseFloat(inputEl.min);
+  const max = parseFloat(inputEl.max);
+  const step = parseFloat(inputEl.step) || 0;
+  let next = clamp(value, min, max);
+  if (step > 0) {
+    next = Math.round(next / step) * step;
+  }
+  return clamp(next, min, max);
 }
 
 function updateCamera() {
@@ -507,12 +525,25 @@ const discCenter = new THREE.Vector3(0, -4, 0);
 const discTopY = discCenter.y + discThickness / 2;
 const disc = new THREE.Mesh(
   new THREE.CylinderGeometry(discRadius, discRadius, discThickness, 80),
-  new THREE.MeshStandardMaterial({
-    color: rAxisColor,
-    transparent: false,
-    opacity: 1,
-    roughness: 0.5,
-  })
+  [
+    new THREE.MeshStandardMaterial({
+      color: rAxisColor,
+      transparent: false,
+      opacity: 1,
+      roughness: 0.5,
+    }),
+    new THREE.MeshStandardMaterial({
+      color: rAxisColor,
+      transparent: false,
+      opacity: 1,
+      roughness: 0.5,
+    }),
+    new THREE.MeshStandardMaterial({
+      color: 0x000000,
+      roughness: 0.4,
+      metalness: 0.1,
+    }),
+  ]
 );
 disc.position.copy(discCenter);
 scene.add(disc);
@@ -533,6 +564,7 @@ const scanOriginMarker = new THREE.Mesh(
 );
 scanOriginMarker.position.copy(scanOrigin);
 scene.add(scanOriginMarker);
+
 
 const rotationIndicatorLength = discRadius * 0.9;
 const rotationLine = makeLine(rAxisColor);
@@ -565,6 +597,15 @@ const armTube = new THREE.Mesh(
   pAxisMaterial
 );
 scene.add(armTube);
+
+const draggableObjects = [
+  { object: movablePoint, type: "y" },
+  { object: xAxisLeftPoint, type: "xy" },
+  { object: xAxisTube, type: "x" },
+  { object: armTube, type: "p" },
+  { object: rotationTip, type: "r" },
+  { object: disc, type: "r" },
+];
 
 const axisLabelGroup = new THREE.Group();
 const axisLineGroup = new THREE.Group();
@@ -902,6 +943,27 @@ function handleResize() {
 }
 
 function onPointerDown(event) {
+  if (event.button === 0) {
+    const rect = canvas.getBoundingClientRect();
+    dragPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    dragPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    dragRaycaster.setFromCamera(dragPointer, camera);
+    const hits = dragRaycaster.intersectObjects(
+      draggableObjects.map((entry) => entry.object),
+      false
+    );
+    if (hits.length) {
+      const hitObject = hits[0].object;
+      const match = draggableObjects.find((entry) => entry.object === hitObject);
+      if (match) {
+        dragState.active = true;
+        dragState.type = match.type;
+        canvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        return;
+      }
+    }
+  }
   if (event.button === 1) {
     event.preventDefault();
     orbit.isPanning = true;
@@ -922,6 +984,50 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
+  if (dragState.active) {
+    const rect = canvas.getBoundingClientRect();
+    dragPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    dragPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    dragRaycaster.setFromCamera(dragPointer, camera);
+    const intersection = new THREE.Vector3();
+    let plane = dragPlane;
+    if (dragState.type === "r") {
+      plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -discTopY);
+    }
+    const hit = dragRaycaster.ray.intersectPlane(plane, intersection);
+    if (hit) {
+      if (dragState.type === "x") {
+        const nextX = clampInputValue(intersection.x, xAxisInput);
+        xAxisInput.value = nextX.toFixed(1);
+        updateScene();
+      } else if (dragState.type === "y") {
+        const nextY = clampInputValue(intersection.y, yAxisInput);
+        yAxisInput.value = nextY.toFixed(1);
+        updateScene();
+      } else if (dragState.type === "xy") {
+        const nextX = clampInputValue(intersection.x, xAxisInput);
+        const nextY = clampInputValue(intersection.y, yAxisInput);
+        xAxisInput.value = nextX.toFixed(1);
+        yAxisInput.value = nextY.toFixed(1);
+        updateScene();
+      } else if (dragState.type === "p") {
+        const baseX = parseFloat(xAxisInput.value);
+        const baseY = parseFloat(yAxisInput.value);
+        const angle = THREE.MathUtils.radToDeg(Math.atan2(intersection.y - baseY, intersection.x - baseX));
+        const deflection = angleToDeflection(angle);
+        pAxisInput.value = deflection.toFixed(1);
+        updateScene();
+      } else if (dragState.type === "r") {
+        const angle = THREE.MathUtils.radToDeg(
+          Math.atan2(intersection.z - discCenter.z, intersection.x - discCenter.x)
+        );
+        const nextR = (angle + 360) % 360;
+        rAxisInput.value = nextR.toFixed(0);
+        updateScene();
+      }
+    }
+    return;
+  }
   if (orbit.isPanning) {
     const dx = event.clientX - orbit.panStartX;
     const dy = event.clientY - orbit.panStartY;
@@ -943,6 +1049,8 @@ function onPointerMove(event) {
 function onPointerUp(event) {
   orbit.isDragging = false;
   orbit.isPanning = false;
+  dragState.active = false;
+  dragState.type = null;
   if (canvas.hasPointerCapture(event.pointerId)) {
     canvas.releasePointerCapture(event.pointerId);
   }
@@ -1055,6 +1163,8 @@ canvas.addEventListener("pointerup", onPointerUp);
 canvas.addEventListener("pointerleave", () => {
   orbit.isDragging = false;
   orbit.isPanning = false;
+  dragState.active = false;
+  dragState.type = null;
 });
 canvas.addEventListener("wheel", onWheel, { passive: false });
 if (viewCubeCanvas) {
