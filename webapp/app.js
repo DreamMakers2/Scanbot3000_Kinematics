@@ -266,6 +266,24 @@ const scanOrigin = new THREE.Vector3(x0, 27, 0);
 const floorOffset = baseOffset - axisThickness / 2;
 floorGradient.position.y = floorOffset;
 floorGrid.position.y = floorOffset;
+const posXOrigin = 1665;
+const posXScale = 5;
+const posYOrigin = 625;
+const posYScale = 25;
+
+function sceneToPos(xLeft, yDisplay) {
+  return {
+    x: posXOrigin - posXScale * xLeft,
+    y: posYOrigin - posYScale * yDisplay,
+  };
+}
+
+function posToScene(posX, posY) {
+  return {
+    x: (posXOrigin - posX) / posXScale,
+    y: (posYOrigin - posY) / posYScale,
+  };
+}
 
 function makeLine(color) {
   const geometry = new THREE.BufferGeometry();
@@ -565,6 +583,19 @@ const scanOriginMarker = new THREE.Mesh(
 scanOriginMarker.position.copy(scanOrigin);
 scene.add(scanOriginMarker);
 
+const apiMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(6, 16, 16),
+  new THREE.MeshStandardMaterial({
+    color: 0x39ff14,
+    emissive: 0x39ff14,
+    emissiveIntensity: 0.85,
+    roughness: 0.2,
+    metalness: 0.05,
+  })
+);
+apiMarker.visible = false;
+scene.add(apiMarker);
+
 
 const rotationIndicatorLength = discRadius * 0.9;
 const rotationLine = makeLine(rAxisColor);
@@ -816,6 +847,11 @@ const pAxisVal = document.getElementById("pAxisVal");
 const rAxisVal = document.getElementById("rAxisVal");
 const yPosVal = document.getElementById("yPosVal");
 const xPosVal = document.getElementById("xPosVal");
+const apiPosX = document.getElementById("apiPosX");
+const apiPosY = document.getElementById("apiPosY");
+const apiPosP = document.getElementById("apiPosP");
+const apiPosR = document.getElementById("apiPosR");
+const apiPosStatus = document.getElementById("apiPosStatus");
 
 if (labelsToggleInput) {
   axisLabelGroup.visible = labelsToggleInput.checked;
@@ -858,13 +894,14 @@ function updateOutputs(yDisplay, xLeft, pVal, rVal) {
   const pDisplay = (-pVal / 90) * 255;
   pAxisVal.textContent = pDisplay.toFixed(0);
   rAxisVal.textContent = rVal.toFixed(0);
-  if (yPosVal) {
-    const posY = 625 - 25 * yDisplay;
-    yPosVal.textContent = posY.toFixed(1);
-  }
-  if (xPosVal) {
-    const posX = 1665 - 5 * xLeft;
-    xPosVal.textContent = posX.toFixed(1);
+  if (yPosVal || xPosVal) {
+    const posValues = sceneToPos(xLeft, yDisplay);
+    if (yPosVal) {
+      yPosVal.textContent = posValues.y.toFixed(1);
+    }
+    if (xPosVal) {
+      xPosVal.textContent = posValues.x.toFixed(1);
+    }
   }
 }
 
@@ -904,6 +941,145 @@ function updateScene() {
   setLine(rotationLine, discCenter.x, discTopY, discCenter.z, arrowEndX, discTopY, arrowEndZ);
   rotationTip.position.set(arrowEndX, discTopY, arrowEndZ);
   updateCoordLabels();
+}
+
+const posApiUrl = "http://192.168.178.222:8001/api/pos";
+const posPollIntervalMs = 200;
+let posPollTimer = null;
+let posFetchInFlight = false;
+
+function readNumeric(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parsePosLine(line) {
+  const axes = {};
+  const regex = /([a-zA-Z][a-zA-Z0-9]*)\s*[:=]\s*(-?\d+(?:\.\d+)?)/g;
+  let match;
+  while ((match = regex.exec(line)) !== null) {
+    const key = match[1].toLowerCase();
+    const value = Number.parseFloat(match[2]);
+    if (Number.isFinite(value)) {
+      axes[key] = value;
+    }
+  }
+  return axes;
+}
+
+function formatApiNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+  return Number.isInteger(value) ? value.toString() : value.toFixed(1);
+}
+
+function updateApiReadout(raw, status) {
+  const values = raw || {};
+  if (apiPosX) {
+    apiPosX.textContent = formatApiNumber(values.x);
+  }
+  if (apiPosY) {
+    apiPosY.textContent = formatApiNumber(values.y);
+  }
+  if (apiPosP) {
+    apiPosP.textContent = formatApiNumber(values.p);
+  }
+  if (apiPosR) {
+    apiPosR.textContent = formatApiNumber(values.r);
+  }
+  if (apiPosStatus) {
+    apiPosStatus.textContent = status ? String(status) : "--";
+  }
+}
+
+function extractPosFromPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const axes = {};
+  ["x", "y", "z", "x1", "x2", "p", "r"].forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      const numeric = readNumeric(payload[key]);
+      if (numeric !== null) {
+        axes[key] = numeric;
+      }
+    }
+  });
+
+  const lineText = typeof payload.line === "string" ? payload.line : "";
+  if (lineText) {
+    const parsed = parsePosLine(lineText);
+    Object.keys(parsed).forEach((key) => {
+      if (!(key in axes)) {
+        axes[key] = parsed[key];
+      }
+    });
+  }
+
+  const rawX = axes.x ?? axes.x1 ?? null;
+  const rawY = axes.y ?? null;
+  const rawZ = axes.z ?? null;
+
+  if (rawX === null || rawY === null) {
+    return null;
+  }
+
+  const mapped = posToScene(rawX, rawY);
+  return {
+    raw: {
+      x: rawX,
+      y: rawY,
+      z: rawZ,
+      p: axes.p ?? null,
+      r: axes.r ?? null,
+    },
+    scene: {
+      x: mapped.x,
+      y: mapped.y,
+      z: Number.isFinite(rawZ) ? rawZ : 0,
+    },
+  };
+}
+
+async function pollPosApi() {
+  if (posFetchInFlight) {
+    return;
+  }
+  posFetchInFlight = true;
+  try {
+    const response = await fetch(`${posApiUrl}?refresh=true`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`pos api ${response.status}`);
+    }
+    const data = await response.json();
+    const posData = extractPosFromPayload(data);
+    updateApiReadout(posData ? posData.raw : null, data.status);
+    if (!posData) {
+      return;
+    }
+    apiMarker.position.set(posData.scene.x, posData.scene.y, posData.scene.z);
+    apiMarker.visible = true;
+  } catch (err) {
+    console.warn("pos api poll failed", err);
+    updateApiReadout(null, "error");
+  } finally {
+    posFetchInFlight = false;
+  }
+}
+
+function startPosPolling() {
+  if (posPollTimer) {
+    return;
+  }
+  pollPosApi();
+  posPollTimer = window.setInterval(pollPosApi, posPollIntervalMs);
 }
 
 function handleResize() {
@@ -1175,6 +1351,7 @@ window.addEventListener("resize", handleResize);
 
 handleResize();
 updateScene();
+startPosPolling();
 
 function animate(time) {
   if (!renderer) {
