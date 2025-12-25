@@ -682,6 +682,29 @@ const scanOriginMarker = new THREE.Mesh(
 scanOriginMarker.position.copy(scanOrigin);
 scene.add(scanOriginMarker);
 
+const scanPathLine = new THREE.Line(
+  new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({
+    color: 0xffd200,
+    transparent: true,
+    opacity: 0.9,
+  })
+);
+scanPathLine.renderOrder = 4;
+scene.add(scanPathLine);
+
+const waypointMarkerGroup = new THREE.Group();
+waypointMarkerGroup.renderOrder = 5;
+scene.add(waypointMarkerGroup);
+const waypointMarkerGeometry = new THREE.SphereGeometry(4, 14, 14);
+const waypointMarkerMaterial = new THREE.MeshStandardMaterial({
+  color: 0x8fd3ff,
+  emissive: 0x8fd3ff,
+  emissiveIntensity: 0.6,
+  roughness: 0.3,
+  metalness: 0.1,
+});
+
 const apiMarker = new THREE.Mesh(
   new THREE.SphereGeometry(6, 16, 16),
   new THREE.MeshStandardMaterial({
@@ -948,6 +971,13 @@ const rAxisInput = document.getElementById("rAxis");
 const lockOriginInput = document.getElementById("lockOrigin");
 const labelsToggleInput = document.getElementById("toggleLabels");
 const coordLabelsToggleInput = document.getElementById("toggleCoordLabels");
+const scanPanel = document.getElementById("scanPanel");
+const scanRadiusInput = document.getElementById("scanRadius");
+const scanWaypointsInput = document.getElementById("scanWaypoints");
+const scanRepeatsInput = document.getElementById("scanRepeats");
+const scanStartDirectionInput = document.getElementById("scanStartDirection");
+const scanDryRunInput = document.getElementById("scanDryRun");
+const scanStartButton = document.getElementById("scanStart");
 
 const yAxisVal = document.getElementById("yAxisVal");
 const xAxisVal = document.getElementById("xAxisVal");
@@ -964,6 +994,7 @@ const apiPosStatus = document.getElementById("apiPosStatus");
 const directControlPanel = document.getElementById("directControlPanel");
 const directControlToggle = document.getElementById("directControlToggle");
 const directControlIntervalInput = document.getElementById("directControlInterval");
+const scanRadiusVal = document.getElementById("scanRadiusVal");
 const axisTuningControls = [
   {
     axis: "y",
@@ -1134,6 +1165,8 @@ const apiStatusPollIntervalMs = 1000;
 let posPollTimer = null;
 let posFetchInFlight = false;
 let lastApiP = null;
+let lastApiScene = null;
+let lastApiRaw = null;
 let apiStatusTimer = null;
 let apiStatusInFlight = false;
 let apiOnlineSince = null;
@@ -1233,11 +1266,26 @@ const axisTuningDefaults = {
   p: { velocity: 500, accel: 100 },
   r: { velocity: 500, accel: 100 },
 };
+let axisTuningState = null;
 const directControlDefaultIntervalSec = 5;
 let directControlTimer = null;
 let lastMoveAbsPayload = null;
 let lastApiStatus = null;
 let lastApiHomed = null;
+const scanDefaults = {
+  radius: 240,
+  waypoints: 9,
+  repeats: 3,
+  startDirection: "forward",
+};
+const scanState = {
+  active: false,
+  previousLockOrigin: null,
+  previousDirectControl: null,
+  previousRMax: null,
+  dryRun: false,
+};
+let scanWaypoints = [];
 
 function getClosestStepIndex(steps, value) {
   if (!Number.isFinite(value)) {
@@ -1371,27 +1419,27 @@ function setupAxisTuningControls() {
   if (!hasAllControls) {
     return;
   }
-  const tuningState = loadAxisTuning();
+  axisTuningState = loadAxisTuning();
   axisTuningControls.forEach((entry) => {
-    setAxisControlValues(entry, tuningState);
+    setAxisControlValues(entry, axisTuningState);
     entry.velInput.addEventListener("input", () => {
       const value = getStepValueFromInput(velocitySteps, entry.velInput);
       entry.velOutput.textContent = value.toString();
-      tuningState[entry.axis].velocity = value;
-      saveAxisTuning(tuningState);
+      axisTuningState[entry.axis].velocity = value;
+      saveAxisTuning(axisTuningState);
     });
     entry.accInput.addEventListener("input", () => {
       const value = getStepValueFromInput(accelSteps, entry.accInput);
       entry.accOutput.textContent = value.toString();
-      tuningState[entry.axis].accel = value;
-      saveAxisTuning(tuningState);
+      axisTuningState[entry.axis].accel = value;
+      saveAxisTuning(axisTuningState);
     });
   });
   const applyLabel = axisApplyButton.textContent || "Apply";
   axisApplyButton.addEventListener("click", async () => {
     axisApplyButton.disabled = true;
     axisApplyButton.textContent = "Applying...";
-    await applyAxisTuning(axisTuningControls, tuningState);
+    await applyAxisTuning(axisTuningControls, axisTuningState);
     axisApplyButton.disabled = false;
     axisApplyButton.textContent = applyLabel;
   });
@@ -1411,7 +1459,7 @@ function updateDirectControlAvailability(status, homed) {
   if (!directControlToggle) {
     return;
   }
-  const available = isDirectControlAvailable(status, homed);
+  const available = !scanState.active && isDirectControlAvailable(status, homed);
   directControlToggle.disabled = !available;
   if (directControlPanel) {
     directControlPanel.classList.toggle("is-disabled", !available);
@@ -1559,6 +1607,500 @@ function setupDirectControlPanel() {
         startDirectControlTimer();
       }
     });
+  }
+}
+
+const scanMoveTolerance = 1.5;
+const scanRotateTolerance = 10;
+const scanMoveTimeoutMs = 20000;
+const scanRotateTimeoutMs = 25000;
+const scanPollIntervalMs = 120;
+
+function readScanRangeValue(inputEl, fallback) {
+  if (!inputEl) {
+    return fallback;
+  }
+  const raw = Number.parseFloat(inputEl.value);
+  if (!Number.isFinite(raw)) {
+    inputEl.value = fallback.toString();
+    return fallback;
+  }
+  const next = clampInputValue(raw, inputEl);
+  inputEl.value = next.toString();
+  return next;
+}
+
+function readScanNumberValue(inputEl, fallback) {
+  if (!inputEl) {
+    return fallback;
+  }
+  const raw = Number.parseInt(inputEl.value, 10);
+  let next = Number.isFinite(raw) ? raw : fallback;
+  const min = Number.parseInt(inputEl.min, 10);
+  const max = Number.parseInt(inputEl.max, 10);
+  if (Number.isFinite(min)) {
+    next = Math.max(min, next);
+  }
+  if (Number.isFinite(max)) {
+    next = Math.min(max, next);
+  }
+  inputEl.value = next.toString();
+  return next;
+}
+
+function updateScanOutputs(settings) {
+  if (scanRadiusVal) {
+    scanRadiusVal.textContent = settings.radius.toFixed(0);
+  }
+}
+
+function getScanSettings() {
+  const radius = readScanRangeValue(scanRadiusInput, scanDefaults.radius);
+  const waypoints = readScanNumberValue(scanWaypointsInput, scanDefaults.waypoints);
+  const repeats = readScanNumberValue(scanRepeatsInput, scanDefaults.repeats);
+  const startDirection = scanStartDirectionInput
+    ? scanStartDirectionInput.value
+    : scanDefaults.startDirection;
+  return {
+    radius,
+    waypoints,
+    repeats,
+    startDirection,
+  };
+}
+
+function getAxisBounds() {
+  const xMin = xAxisInput ? Number.parseFloat(xAxisInput.min) : 0;
+  const xMax = xAxisInput ? Number.parseFloat(xAxisInput.max) : 0;
+  const yMin = yAxisInput ? Number.parseFloat(yAxisInput.min) : 0;
+  const yMax = yAxisInput ? Number.parseFloat(yAxisInput.max) : 0;
+  return {
+    xMin: Number.isFinite(xMin) ? xMin : 0,
+    xMax: Number.isFinite(xMax) ? xMax : 0,
+    yMin: Number.isFinite(yMin) ? yMin : 0,
+    yMax: Number.isFinite(yMax) ? yMax : 0,
+  };
+}
+
+function buildNominalArcPoints(radius) {
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return { points: [], sweep: 0 };
+  }
+  const startAngle = 0;
+  const endAngle = Math.PI / 2;
+  const sweep = endAngle - startAngle;
+  const span = Math.abs(endAngle - startAngle);
+  const sampleCount = Math.max(64, Math.ceil((span * 180) / Math.PI));
+  const points = [];
+  for (let i = 0; i <= sampleCount; i += 1) {
+    const t = sampleCount === 0 ? 0 : i / sampleCount;
+    const angle = startAngle + (endAngle - startAngle) * t;
+    points.push({
+      x: scanOrigin.x + radius * Math.cos(angle),
+      y: scanOrigin.y + radius * Math.sin(angle),
+    });
+  }
+  return { points, sweep };
+}
+
+function clampPathPoints(points, bounds) {
+  const clamped = [];
+  points.forEach((point) => {
+    const x = clamp(point.x, bounds.xMin, bounds.xMax);
+    const y = clamp(point.y, bounds.yMin, bounds.yMax);
+    const prev = clamped[clamped.length - 1];
+    if (!prev || Math.hypot(x - prev.x, y - prev.y) > 0.001) {
+      clamped.push({ x, y });
+    }
+  });
+  return clamped;
+}
+
+function resamplePathPoints(points, count) {
+  if (!points.length) {
+    return [];
+  }
+  if (count <= 1) {
+    return [{ x: points[0].x, y: points[0].y }];
+  }
+  if (points.length === 1) {
+    return Array.from({ length: count }, () => ({ x: points[0].x, y: points[0].y }));
+  }
+  const distances = [0];
+  for (let i = 1; i < points.length; i += 1) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    distances.push(distances[i - 1] + Math.hypot(dx, dy));
+  }
+  const total = distances[distances.length - 1];
+  if (total <= 0) {
+    return Array.from({ length: count }, () => ({ x: points[0].x, y: points[0].y }));
+  }
+  const step = total / (count - 1);
+  const sampled = [];
+  let segmentIndex = 1;
+  for (let i = 0; i < count; i += 1) {
+    const target = step * i;
+    while (
+      segmentIndex < distances.length - 1 &&
+      distances[segmentIndex] < target
+    ) {
+      segmentIndex += 1;
+    }
+    const prevDist = distances[segmentIndex - 1];
+    const nextDist = distances[segmentIndex];
+    const span = nextDist - prevDist;
+    const ratio = span > 0 ? (target - prevDist) / span : 0;
+    const prevPoint = points[segmentIndex - 1];
+    const nextPoint = points[segmentIndex];
+    sampled.push({
+      x: prevPoint.x + (nextPoint.x - prevPoint.x) * ratio,
+      y: prevPoint.y + (nextPoint.y - prevPoint.y) * ratio,
+    });
+  }
+  return sampled;
+}
+
+function updateWaypointMarkers(points) {
+  if (!waypointMarkerGroup) {
+    return;
+  }
+  const count = points.length;
+  while (waypointMarkerGroup.children.length < count) {
+    const marker = new THREE.Mesh(waypointMarkerGeometry, waypointMarkerMaterial);
+    waypointMarkerGroup.add(marker);
+  }
+  while (waypointMarkerGroup.children.length > count) {
+    const marker = waypointMarkerGroup.children[waypointMarkerGroup.children.length - 1];
+    if (marker) {
+      waypointMarkerGroup.remove(marker);
+    }
+  }
+  for (let i = 0; i < count; i += 1) {
+    const marker = waypointMarkerGroup.children[i];
+    const point = points[i];
+    marker.position.set(point.x, point.y, 0);
+  }
+}
+
+function updateScanPreview() {
+  if (!scanRadiusInput) {
+    return;
+  }
+  const settings = getScanSettings();
+  updateScanOutputs(settings);
+  const bounds = getAxisBounds();
+  const nominal = buildNominalArcPoints(settings.radius);
+  const clamped = clampPathPoints(nominal.points, bounds);
+  scanWaypoints = resamplePathPoints(clamped, settings.waypoints);
+  updateWaypointMarkers(scanWaypoints);
+
+  if (scanPathLine) {
+    const points = clamped.length
+      ? clamped
+      : [{ x: scanOrigin.x, y: scanOrigin.y }];
+    const vectors = points.map((point) => new THREE.Vector3(point.x, point.y, 0));
+    scanPathLine.geometry.setFromPoints(vectors);
+  }
+}
+
+function deflectionToPDisplay(deflection) {
+  return (-deflection / 90) * 255;
+}
+
+function getLockOriginDeflection(xVal, yVal) {
+  const desiredAngle = angleToOrigin(xVal, yVal);
+  return angleToDeflection(desiredAngle);
+}
+
+function setAxisInputsFromScan(point, deflection, rPos, shouldUpdateScene = true) {
+  if (xAxisInput) {
+    xAxisInput.value = point.x.toFixed(1);
+  }
+  if (yAxisInput) {
+    yAxisInput.value = point.y.toFixed(1);
+  }
+  if (pAxisInput) {
+    pAxisInput.value = deflection.toFixed(1);
+  }
+  if (rAxisInput) {
+    rAxisInput.value = Math.round(rPos).toString();
+  }
+  if (shouldUpdateScene) {
+    updateScene();
+  }
+}
+
+function applyDryRunState(point, deflection, rPos) {
+  const pos = sceneToPos(point.x, point.y);
+  const pDisplay = clamp(deflectionToPDisplay(deflection), -255, 255);
+  const raw = {
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    z: null,
+    p: Math.round(pDisplay),
+    r: Math.round(rPos),
+  };
+  lastApiScene = { x: point.x, y: point.y, z: 0 };
+  lastApiRaw = raw;
+  lastApiP = raw.p;
+  if (apiMarker) {
+    apiMarker.position.set(point.x, point.y, 0);
+    apiMarker.visible = true;
+  }
+  updateApiReadout(raw, "dry-run");
+}
+
+function getCurrentRPos() {
+  if (lastApiRaw && Number.isFinite(lastApiRaw.r)) {
+    return lastApiRaw.r;
+  }
+  if (!rAxisInput) {
+    return 0;
+  }
+  const raw = Number.parseFloat(rAxisInput.value);
+  return Number.isFinite(raw) ? raw : 0;
+}
+
+function ensureRInputMax(value) {
+  if (!rAxisInput) {
+    return;
+  }
+  const currentMax = Number.parseFloat(rAxisInput.max);
+  if (Number.isFinite(currentMax) && value > currentMax) {
+    rAxisInput.max = Math.ceil(value).toString();
+  }
+}
+
+function setScanInputsDisabled(disabled) {
+  [
+    scanRadiusInput,
+    scanWaypointsInput,
+    scanRepeatsInput,
+    scanStartDirectionInput,
+    scanDryRunInput,
+  ].forEach((input) => {
+    if (input) {
+      input.disabled = disabled;
+    }
+  });
+}
+
+function setScanModeActive(active) {
+  scanState.active = active;
+  if (!active) {
+    scanState.dryRun = false;
+  }
+  setScanInputsDisabled(active);
+  if (scanStartButton) {
+    scanStartButton.disabled = active;
+    scanStartButton.textContent = active ? "Scanning..." : "Start Scan";
+    if (!active) {
+      scanStartButton.classList.remove("is-error");
+    }
+  }
+  if (lockOriginInput) {
+    if (active) {
+      scanState.previousLockOrigin = lockOriginInput.checked;
+      lockOriginInput.checked = true;
+      lockOriginInput.disabled = true;
+    } else {
+      lockOriginInput.disabled = false;
+      if (scanState.previousLockOrigin !== null) {
+        lockOriginInput.checked = scanState.previousLockOrigin;
+      }
+      scanState.previousLockOrigin = null;
+    }
+  }
+  if (directControlIntervalInput) {
+    directControlIntervalInput.disabled = active;
+  }
+  if (directControlToggle) {
+    if (active) {
+      scanState.previousDirectControl = directControlToggle.checked;
+      directControlToggle.checked = false;
+      stopDirectControlTimer();
+    }
+  }
+  if (rAxisInput) {
+    if (active) {
+      if (scanState.previousRMax === null) {
+        const maxVal = Number.parseFloat(rAxisInput.max);
+        scanState.previousRMax = Number.isFinite(maxVal) ? maxVal : null;
+      }
+    } else if (scanState.previousRMax !== null) {
+      rAxisInput.max = scanState.previousRMax.toString();
+      scanState.previousRMax = null;
+    }
+  }
+  updateDirectControlAvailability(lastApiStatus, lastApiHomed);
+  if (!active && directControlToggle) {
+    if (scanState.previousDirectControl && !directControlToggle.disabled) {
+      directControlToggle.checked = true;
+      startDirectControlTimer();
+    }
+    scanState.previousDirectControl = null;
+  }
+  updateScene();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function waitForMove(target, timeoutMs) {
+  const start = performance.now();
+  while (performance.now() - start < timeoutMs) {
+    if (!scanState.active) {
+      return false;
+    }
+    if (lastApiScene) {
+      const dx = lastApiScene.x - target.x;
+      const dy = lastApiScene.y - target.y;
+      if (Math.hypot(dx, dy) <= scanMoveTolerance) {
+        return true;
+      }
+    }
+    await sleep(scanPollIntervalMs);
+  }
+  return false;
+}
+
+async function waitForRotation(targetR, timeoutMs) {
+  const start = performance.now();
+  while (performance.now() - start < timeoutMs) {
+    if (!scanState.active) {
+      return false;
+    }
+    if (lastApiRaw && Number.isFinite(lastApiRaw.r)) {
+      const delta = Math.abs(lastApiRaw.r - targetR);
+      if (delta <= scanRotateTolerance) {
+        return true;
+      }
+    }
+    await sleep(scanPollIntervalMs);
+  }
+  return false;
+}
+
+async function executeWaypoint(point, currentR) {
+  const deflection = getLockOriginDeflection(point.x, point.y);
+  const pos = sceneToPos(point.x, point.y);
+  const pDisplay = clamp(deflectionToPDisplay(deflection), -255, 255);
+  if (scanState.dryRun) {
+    setAxisInputsFromScan(point, deflection, currentR, false);
+    applyDryRunState(point, deflection, currentR);
+    updateScene();
+    await sleep(scanPollIntervalMs);
+    const nextR = currentR + rAxisPosPerRev;
+    ensureRInputMax(nextR);
+    setAxisInputsFromScan(point, deflection, nextR, false);
+    applyDryRunState(point, deflection, nextR);
+    updateScene();
+    await sleep(scanPollIntervalMs);
+    return nextR;
+  }
+  const payload = {
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    p: Math.round(pDisplay),
+    r: Math.round(currentR),
+  };
+  await sendMoveAbs(payload);
+  setAxisInputsFromScan(point, deflection, currentR);
+  const reached = await waitForMove(point, scanMoveTimeoutMs);
+  if (!reached) {
+    console.warn("scan waypoint move timed out", payload);
+  }
+  const nextR = currentR + rAxisPosPerRev;
+  ensureRInputMax(nextR);
+  const rotatePayload = { ...payload, r: Math.round(nextR) };
+  await sendMoveAbs(rotatePayload);
+  setAxisInputsFromScan(point, deflection, nextR);
+  const rotated = await waitForRotation(nextR, scanRotateTimeoutMs);
+  if (!rotated) {
+    console.warn("scan rotation timed out", rotatePayload);
+  }
+  return nextR;
+}
+
+async function runWaypointPass(waypoints, startR) {
+  let currentR = startR;
+  for (const point of waypoints) {
+    if (!scanState.active) {
+      break;
+    }
+    currentR = await executeWaypoint(point, currentR);
+  }
+  return currentR;
+}
+
+async function startScanSequence() {
+  if (scanState.active || !scanStartButton) {
+    return;
+  }
+  const isDryRun = scanDryRunInput ? scanDryRunInput.checked : false;
+  if (!isDryRun && !isDirectControlAvailable(lastApiStatus, lastApiHomed)) {
+    scanStartButton.classList.add("is-error");
+    scanStartButton.textContent = "API Offline";
+    window.setTimeout(() => {
+      if (!scanState.active) {
+        scanStartButton.textContent = "Start Scan";
+        scanStartButton.classList.remove("is-error");
+      }
+    }, 1200);
+    return;
+  }
+  updateScanPreview();
+  const settings = getScanSettings();
+  if (!scanWaypoints.length) {
+    return;
+  }
+  const forward = settings.startDirection === "reverse"
+    ? [...scanWaypoints].reverse()
+    : [...scanWaypoints];
+  const reverse = [...forward].reverse();
+  scanState.dryRun = isDryRun;
+  setScanModeActive(true);
+  scanStartButton.classList.add("is-running");
+  let currentR = getCurrentRPos();
+  try {
+    for (let cycle = 0; cycle < settings.repeats; cycle += 1) {
+      currentR = await runWaypointPass(forward, currentR);
+      currentR = await runWaypointPass(reverse, currentR);
+    }
+  } catch (err) {
+    console.warn("scan sequence failed", err);
+  } finally {
+    scanStartButton.classList.remove("is-running");
+    scanState.dryRun = false;
+    setScanModeActive(false);
+  }
+}
+
+function setupScanControls() {
+  if (!scanPanel) {
+    return;
+  }
+  updateScanPreview();
+  if (scanRadiusInput) {
+    scanRadiusInput.addEventListener("input", updateScanPreview);
+  }
+  if (scanWaypointsInput) {
+    scanWaypointsInput.addEventListener("input", updateScanPreview);
+  }
+  if (scanRepeatsInput) {
+    scanRepeatsInput.addEventListener("input", () => {
+      readScanNumberValue(scanRepeatsInput, scanDefaults.repeats);
+    });
+  }
+  if (scanStartDirectionInput) {
+    scanStartDirectionInput.addEventListener("change", updateScanPreview);
+  }
+  if (scanStartButton) {
+    scanStartButton.addEventListener("click", startScanSequence);
   }
 }
 
@@ -1904,6 +2446,9 @@ function extractPosFromPayload(payload) {
 }
 
 async function pollPosApi() {
+  if (scanState.dryRun) {
+    return;
+  }
   if (posFetchInFlight) {
     return;
   }
@@ -1921,6 +2466,8 @@ async function pollPosApi() {
       return;
     }
     lastApiP = Number.isFinite(posData.raw.p) ? posData.raw.p : null;
+    lastApiScene = posData.scene;
+    lastApiRaw = posData.raw;
     apiMarker.position.set(posData.scene.x, posData.scene.y, posData.scene.z);
     apiMarker.visible = true;
     updateApiDirectionLine(getPAxisAngleRad());
@@ -2194,6 +2741,7 @@ if (emergencyStopButton) {
 
 setupAxisTuningControls();
 setupDirectControlPanel();
+setupScanControls();
 
 window.addEventListener("keydown", (event) => {
   if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {

@@ -191,6 +191,90 @@ body {
   gap: 10px;
 }
 
+.scan-panel {
+  position: relative;
+  width: min(340px, 90vw);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 12px 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 36px rgba(31, 42, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scan-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+}
+
+.scan-inline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scan-field label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+
+.scan-field input[type="number"],
+.scan-field select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(31, 42, 42, 0.15);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink-strong);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+
+.scan-start {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(239, 125, 60, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.scan-start:disabled {
+  cursor: progress;
+  opacity: 0.7;
+  box-shadow: none;
+}
+
+.scan-start:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 20px rgba(239, 125, 60, 0.32);
+}
+
+.scan-start.is-running {
+  background: var(--accent-2);
+  box-shadow: 0 10px 18px rgba(15, 124, 156, 0.28);
+}
+
+.scan-start.is-error {
+  background: var(--danger);
+  box-shadow: 0 10px 18px rgba(214, 58, 50, 0.28);
+}
+
 .direct-control-panel.is-disabled .toggle {
   opacity: 0.6;
 }
