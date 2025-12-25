@@ -23,6 +23,14 @@
       </header>
       <div class="viewport">
         <canvas id="scene"></canvas>
+        <div class="top-controls">
+          <button class="top-button" id="driverStatusButton" type="button">Driver Status</button>
+          <button class="top-button" id="driverSettingsButton" type="button">Driver Settings</button>
+        </div>
+        <div class="api-status" id="apiStatus">
+          <span class="api-status-state" id="apiStatusState">OFFLINE</span>
+          <span class="api-status-time" id="apiStatusTime">0s</span>
+        </div>
         <div class="hud-stack">
           <div class="direct-control-panel" id="directControlPanel">
             <div class="toggle">
@@ -66,8 +74,11 @@
             <div class="control">
               <label for="rAxis">R-axis (rotation)</label>
               <div class="control-row">
-                <input id="rAxis" type="range" min="0" max="360" value="0" step="1" />
-                <output id="rAxisVal">0</output>
+                <input id="rAxis" type="range" min="0" max="5000" value="0" step="1" />
+                <div class="value-pair">
+                  <output id="rAxisVal">0.0</output>
+                  <span class="pos">pos <output id="rPosVal">0</output></span>
+                </div>
               </div>
             </div>
             <div class="toggle">
@@ -144,7 +155,7 @@
               <div class="axis-tuning-controls">
                 <div class="axis-tuning-control">
                   <label class="axis-metric" for="axisVelY">Vel</label>
-                  <input id="axisVelY" type="range" min="0" max="4" value="2" step="1" />
+                  <input id="axisVelY" type="range" min="0" max="8" value="6" step="1" />
                   <output id="axisVelYVal">500</output>
                 </div>
                 <div class="axis-tuning-control">
@@ -159,7 +170,7 @@
               <div class="axis-tuning-controls">
                 <div class="axis-tuning-control">
                   <label class="axis-metric" for="axisVelX">Vel</label>
-                  <input id="axisVelX" type="range" min="0" max="4" value="2" step="1" />
+                  <input id="axisVelX" type="range" min="0" max="8" value="6" step="1" />
                   <output id="axisVelXVal">500</output>
                 </div>
                 <div class="axis-tuning-control">
@@ -174,7 +185,7 @@
               <div class="axis-tuning-controls">
                 <div class="axis-tuning-control">
                   <label class="axis-metric" for="axisVelP">Vel</label>
-                  <input id="axisVelP" type="range" min="0" max="4" value="2" step="1" />
+                  <input id="axisVelP" type="range" min="0" max="8" value="6" step="1" />
                   <output id="axisVelPVal">500</output>
                 </div>
                 <div class="axis-tuning-control">
@@ -189,7 +200,7 @@
               <div class="axis-tuning-controls">
                 <div class="axis-tuning-control">
                   <label class="axis-metric" for="axisVelR">Vel</label>
-                  <input id="axisVelR" type="range" min="0" max="4" value="2" step="1" />
+                  <input id="axisVelR" type="range" min="0" max="8" value="6" step="1" />
                   <output id="axisVelRVal">500</output>
                 </div>
                 <div class="axis-tuning-control">
@@ -202,7 +213,11 @@
           </div>
           <button class="axis-apply" id="axisApply" type="button">Apply</button>
         </div>
-        <div class="view-readout" id="viewReadout"></div>
+        <div class="center-controls" id="centerControls">
+          <button class="emergency-stop" id="emergencyStop" type="button">EMERGENCY STOP</button>
+          <div class="view-readout" id="viewReadout"></div>
+        </div>
+        <div class="popup-layer" id="popupLayer"></div>
       </div>
     </div>
     <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>

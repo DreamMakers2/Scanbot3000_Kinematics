@@ -3,6 +3,13 @@ const axisCanvas = document.getElementById("axisIndicator");
 const viewCubeCanvas = document.getElementById("viewCube");
 const cameraModeSelect = document.getElementById("cameraMode");
 const viewReadout = document.getElementById("viewReadout");
+const emergencyStopButton = document.getElementById("emergencyStop");
+const driverStatusButton = document.getElementById("driverStatusButton");
+const driverSettingsButton = document.getElementById("driverSettingsButton");
+const popupLayer = document.getElementById("popupLayer");
+const apiStatus = document.getElementById("apiStatus");
+const apiStatusState = document.getElementById("apiStatusState");
+const apiStatusTime = document.getElementById("apiStatusTime");
 const viewport = document.querySelector(".viewport");
 
 if (!canvas || !viewport) {
@@ -139,6 +146,8 @@ function setOrbitToDirection(direction) {
 
 const pressedKeys = new Set();
 let lastFrameTime = performance.now();
+let lastReadoutWidth = 0;
+let lastReadoutHeight = 0;
 
 function updateKeyMovement(delta) {
   if (!pressedKeys.size) {
@@ -174,6 +183,24 @@ function updateKeyMovement(delta) {
   updateCamera();
 }
 
+function syncEmergencyStopSizing() {
+  if (!viewReadout || !emergencyStopButton) {
+    return;
+  }
+  const rect = viewReadout.getBoundingClientRect();
+  const nextWidth = Math.round(rect.width);
+  const nextHeight = Math.round(rect.height);
+  if (!nextWidth || !nextHeight) {
+    return;
+  }
+  if (nextWidth !== lastReadoutWidth || nextHeight !== lastReadoutHeight) {
+    emergencyStopButton.style.width = `${nextWidth}px`;
+    emergencyStopButton.style.height = `${nextHeight * 2}px`;
+    lastReadoutWidth = nextWidth;
+    lastReadoutHeight = nextHeight;
+  }
+}
+
 function updateViewReadout() {
   if (!viewReadout) {
     return;
@@ -182,6 +209,7 @@ function updateViewReadout() {
   const thetaDeg = THREE.MathUtils.radToDeg(orbit.theta);
   const phiDeg = THREE.MathUtils.radToDeg(orbit.phi);
   viewReadout.textContent = `View x:${pos.x.toFixed(1)} y:${pos.y.toFixed(1)} z:${pos.z.toFixed(1)} | θ:${thetaDeg.toFixed(1)}° φ:${phiDeg.toFixed(1)}°`;
+  syncEmergencyStopSizing();
 }
 
 function panCamera(dx, dy) {
@@ -253,6 +281,7 @@ const xAxisColor = 0x2ecc71;
 const yAxisColor = 0xe74c3c;
 const pAxisColor = 0x8e44ad;
 const rAxisColor = 0x2c7be5;
+const apiMarkerColor = 0x39ff14;
 const labelLineColor = 0x111111;
 const x0 = 0;
 const y0 = 0;
@@ -262,6 +291,9 @@ const yAxisLength = 400;
 const xAxisLength = 600;
 const armLength = 80;
 const axisThickness = 16;
+const apiDirectionLineLength = 500;
+const apiDirectionFadeLength = 100;
+const apiDirectionFadeSegments = 10;
 const scanOrigin = new THREE.Vector3(x0, 27, 0);
 const floorOffset = baseOffset - axisThickness / 2;
 floorGradient.position.y = floorOffset;
@@ -270,6 +302,9 @@ const posXOrigin = 1665;
 const posXScale = 5;
 const posYOrigin = 625;
 const posYScale = 25;
+const rAxisPosPerRev = 3000;
+const rAxisDegreesPerPos = 360 / rAxisPosPerRev;
+const rAxisPosPerDegree = rAxisPosPerRev / 360;
 
 function sceneToPos(xLeft, yDisplay) {
   return {
@@ -283,6 +318,14 @@ function posToScene(posX, posY) {
     x: (posXOrigin - posX) / posXScale,
     y: (posYOrigin - posY) / posYScale,
   };
+}
+
+function rPosToDegrees(pos) {
+  return pos * rAxisDegreesPerPos;
+}
+
+function rDegreesToPos(deg) {
+  return deg * rAxisPosPerDegree;
 }
 
 function makeLine(color) {
@@ -304,6 +347,62 @@ function setLine(lineData, x1, y1, z1, x2, y2, z2) {
   positions[5] = z2;
   lineData.line.geometry.attributes.position.needsUpdate = true;
   lineData.line.geometry.computeBoundingSphere();
+}
+
+function createFadingLine(color, totalLength, fadeLength, fadeSegments) {
+  const group = new THREE.Group();
+  const baseLine = makeLine(color);
+  baseLine.line.material.transparent = true;
+  baseLine.line.material.opacity = 1;
+  group.add(baseLine.line);
+
+  const segments = [];
+  const segmentCount = Math.max(2, fadeSegments);
+  for (let i = 0; i < segmentCount; i += 1) {
+    const segment = makeLine(color);
+    segment.line.material.transparent = true;
+    segment.line.material.opacity = 1 - i / (segmentCount - 1);
+    group.add(segment.line);
+    segments.push(segment);
+  }
+
+  return {
+    group,
+    baseLine,
+    segments,
+    totalLength,
+    fadeLength,
+  };
+}
+
+function updateFadingLine(lineData, origin, angleRad) {
+  const { segments, totalLength, fadeLength } = lineData;
+  const segmentCount = segments.length;
+  if (segmentCount === 0) {
+    return;
+  }
+
+  const dirX = Math.cos(angleRad);
+  const dirY = Math.sin(angleRad);
+  const startX = origin.x;
+  const startY = origin.y;
+  const startZ = origin.z;
+
+  const baseLength = Math.max(0, totalLength - fadeLength);
+  const baseEndX = startX + dirX * baseLength;
+  const baseEndY = startY + dirY * baseLength;
+  setLine(lineData.baseLine, startX, startY, startZ, baseEndX, baseEndY, startZ);
+
+  const segmentLength = fadeLength / segmentCount;
+  for (let i = 0; i < segmentCount; i += 1) {
+    const segmentStart = baseLength + segmentLength * i;
+    const segmentEnd = baseLength + segmentLength * (i + 1);
+    const segStartX = startX + dirX * segmentStart;
+    const segStartY = startY + dirY * segmentStart;
+    const segEndX = startX + dirX * segmentEnd;
+    const segEndY = startY + dirY * segmentEnd;
+    setLine(segments[i], segStartX, segStartY, startZ, segEndX, segEndY, startZ);
+  }
 }
 
 function initAxisIndicator() {
@@ -586,8 +685,8 @@ scene.add(scanOriginMarker);
 const apiMarker = new THREE.Mesh(
   new THREE.SphereGeometry(6, 16, 16),
   new THREE.MeshStandardMaterial({
-    color: 0x39ff14,
-    emissive: 0x39ff14,
+    color: apiMarkerColor,
+    emissive: apiMarkerColor,
     emissiveIntensity: 0.85,
     roughness: 0.2,
     metalness: 0.05,
@@ -595,6 +694,15 @@ const apiMarker = new THREE.Mesh(
 );
 apiMarker.visible = false;
 scene.add(apiMarker);
+
+const apiDirectionLine = createFadingLine(
+  apiMarkerColor,
+  apiDirectionLineLength,
+  apiDirectionFadeLength,
+  apiDirectionFadeSegments
+);
+apiDirectionLine.group.visible = false;
+scene.add(apiDirectionLine.group);
 
 
 const rotationIndicatorLength = discRadius * 0.9;
@@ -847,6 +955,7 @@ const pAxisVal = document.getElementById("pAxisVal");
 const rAxisVal = document.getElementById("rAxisVal");
 const yPosVal = document.getElementById("yPosVal");
 const xPosVal = document.getElementById("xPosVal");
+const rPosVal = document.getElementById("rPosVal");
 const apiPosX = document.getElementById("apiPosX");
 const apiPosY = document.getElementById("apiPosY");
 const apiPosP = document.getElementById("apiPosP");
@@ -922,12 +1031,45 @@ function angleToOrigin(xLeft, yVal) {
   );
 }
 
+function getPAxisAngleRad() {
+  const pVal = Number.parseFloat(pAxisInput.value);
+  const safeP = Number.isFinite(pVal) ? pVal : 0;
+  return THREE.MathUtils.degToRad(deflectionToAngle(safeP));
+}
+
+function apiPToAngleRad(rawP) {
+  if (!Number.isFinite(rawP)) {
+    return null;
+  }
+  const deflection = (-rawP / 255) * 90;
+  return THREE.MathUtils.degToRad(deflectionToAngle(deflection));
+}
+
+function updateApiDirectionLine(fallbackAngleRad) {
+  if (!apiMarker.visible) {
+    apiDirectionLine.group.visible = false;
+    return;
+  }
+  const apiAngleRad = apiPToAngleRad(lastApiP);
+  const angleRad = Number.isFinite(apiAngleRad) ? apiAngleRad : fallbackAngleRad;
+  if (!Number.isFinite(angleRad)) {
+    apiDirectionLine.group.visible = false;
+    return;
+  }
+  apiDirectionLine.group.visible = true;
+  updateFadingLine(apiDirectionLine, apiMarker.position, angleRad);
+}
+
 function updateOutputs(yDisplay, xLeft, pVal, rVal) {
   yAxisVal.textContent = yDisplay.toFixed(1);
   xAxisVal.textContent = xLeft.toFixed(1);
   const pDisplay = (-pVal / 90) * 255;
   pAxisVal.textContent = pDisplay.toFixed(0);
-  rAxisVal.textContent = rVal.toFixed(0);
+  const rDegrees = rPosToDegrees(rVal);
+  rAxisVal.textContent = rDegrees.toFixed(1);
+  if (rPosVal) {
+    rPosVal.textContent = rVal.toFixed(0);
+  }
   if (yPosVal || xPosVal) {
     const posValues = sceneToPos(xLeft, yDisplay);
     if (yPosVal) {
@@ -969,12 +1111,14 @@ function updateScene() {
   armTube.rotation.set(0, 0, angleRad);
   updateLabelPositions(xLeft, xRight, yActual, armEndX, armEndY);
 
-  const rotationRad = THREE.MathUtils.degToRad(rVal);
+  const rotationDeg = rPosToDegrees(rVal);
+  const rotationRad = THREE.MathUtils.degToRad(rotationDeg);
   const arrowEndX = discCenter.x + rotationIndicatorLength * Math.cos(rotationRad);
   const arrowEndZ = discCenter.z + rotationIndicatorLength * Math.sin(rotationRad);
   setLine(rotationLine, discCenter.x, discTopY, discCenter.z, arrowEndX, discTopY, arrowEndZ);
   rotationTip.position.set(arrowEndX, discTopY, arrowEndZ);
   updateCoordLabels();
+  updateApiDirectionLine(angleRad);
 }
 
 const apiBaseUrl = "http://192.168.178.222:8001/api";
@@ -982,9 +1126,18 @@ const posApiUrl = `${apiBaseUrl}/pos`;
 const maxVelocityUrl = `${apiBaseUrl}/maxvelocity`;
 const maxAccelUrl = `${apiBaseUrl}/maxaccel`;
 const moveAbsUrl = `${apiBaseUrl}/moveabs`;
+const driverStatusUrl = `${apiBaseUrl}/driverstatus`;
+const driverSettingsUrl = `${apiBaseUrl}/driversettings`;
+const stopUrl = `${apiBaseUrl}/stop`;
 const posPollIntervalMs = 50;
+const apiStatusPollIntervalMs = 1000;
 let posPollTimer = null;
 let posFetchInFlight = false;
+let lastApiP = null;
+let apiStatusTimer = null;
+let apiStatusInFlight = false;
+let apiOnlineSince = null;
+let apiOfflineSince = null;
 
 function readNumeric(value) {
   if (typeof value === "number") {
@@ -997,7 +1150,81 @@ function readNumeric(value) {
   return null;
 }
 
-const velocitySteps = [100, 250, 500, 750, 1000];
+function setApiStatus(isOnline) {
+  const now = Date.now();
+  if (isOnline) {
+    if (!apiOnlineSince) {
+      apiOnlineSince = now;
+    }
+    apiOfflineSince = null;
+    if (apiStatus) {
+      apiStatus.classList.add("is-online");
+      apiStatus.classList.remove("is-offline");
+    }
+    if (apiStatusState) {
+      apiStatusState.textContent = "ONLINE";
+    }
+  } else {
+    if (!apiOfflineSince) {
+      apiOfflineSince = now;
+    }
+    apiOnlineSince = null;
+    if (apiStatus) {
+      apiStatus.classList.add("is-offline");
+      apiStatus.classList.remove("is-online");
+    }
+    if (apiStatusState) {
+      apiStatusState.textContent = "OFFLINE";
+    }
+  }
+}
+
+function updateApiStatusTime() {
+  if (!apiStatusTime) {
+    return;
+  }
+  const now = Date.now();
+  if (apiOnlineSince) {
+    const seconds = Math.max(0, Math.floor((now - apiOnlineSince) / 1000));
+    apiStatusTime.textContent = `${seconds}s`;
+    return;
+  }
+  if (apiOfflineSince) {
+    const seconds = Math.max(0, Math.floor((now - apiOfflineSince) / 1000));
+    apiStatusTime.textContent = `${seconds}s`;
+    return;
+  }
+  apiStatusTime.textContent = "--";
+}
+
+async function pollApiStatus() {
+  if (apiStatusInFlight) {
+    return;
+  }
+  apiStatusInFlight = true;
+  try {
+    const response = await fetch(`${posApiUrl}?refresh=true`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`api status ${response.status}`);
+    }
+    setApiStatus(true);
+  } catch (err) {
+    setApiStatus(false);
+  } finally {
+    apiStatusInFlight = false;
+    updateApiStatusTime();
+  }
+}
+
+function startApiStatusPolling() {
+  if (apiStatusTimer) {
+    return;
+  }
+  pollApiStatus();
+  apiStatusTimer = window.setInterval(pollApiStatus, apiStatusPollIntervalMs);
+}
+
+const velocitySteps = [5, 10, 25, 50, 100, 250, 500, 750, 1000];
 const accelSteps = [25, 50, 100, 250, 500];
 const axisTuningStorageKey = "scanbot.axisTuning.v1";
 const axisTuningDefaults = {
@@ -1335,6 +1562,256 @@ function setupDirectControlPanel() {
   }
 }
 
+const driverAxes = ["x1", "x2", "y", "r"];
+const stopAxes = ["x", "y", "p", "r", "x1", "x2"];
+let popupZIndex = 6;
+let emergencyStopInFlight = false;
+
+function clearElement(node) {
+  while (node.firstChild) {
+    node.removeChild(node.firstChild);
+  }
+}
+
+function formatPopupValue(value) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+  return String(value);
+}
+
+function findAxisContainer(payload, axes) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (axes.some((axis) => Object.prototype.hasOwnProperty.call(payload, axis))) {
+    return payload;
+  }
+  const candidates = ["axes", "axis", "data", "result", "payload", "drivers"];
+  for (const key of candidates) {
+    const candidate = payload[key];
+    if (candidate && typeof candidate === "object") {
+      if (axes.some((axis) => Object.prototype.hasOwnProperty.call(candidate, axis))) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function renderDriverPayload(body, payload, title) {
+  clearElement(body);
+  const axisContainer = findAxisContainer(payload, driverAxes);
+  if (!axisContainer) {
+    const fallback = document.createElement("div");
+    fallback.className = "popup-value";
+    const fallbackText =
+      payload === null || payload === undefined
+        ? `${title} returned no data.`
+        : typeof payload === "string"
+          ? payload
+          : JSON.stringify(payload, null, 2);
+    fallback.textContent = fallbackText;
+    body.append(fallback);
+    return;
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "popup-grid";
+  driverAxes.forEach((axis) => {
+    const row = document.createElement("div");
+    row.className = "popup-row";
+    const label = document.createElement("div");
+    label.className = "popup-axis";
+    label.textContent = axis.toUpperCase();
+    const value = document.createElement("pre");
+    value.className = "popup-value";
+    value.textContent = formatPopupValue(axisContainer[axis]);
+    row.append(label, value);
+    grid.append(row);
+  });
+  body.append(grid);
+}
+
+function positionPopup(popup) {
+  if (!viewport) {
+    return;
+  }
+  const bounds = viewport.getBoundingClientRect();
+  const rect = popup.getBoundingClientRect();
+  const left = clamp((bounds.width - rect.width) / 2, 12, bounds.width - rect.width - 12);
+  const top = clamp(bounds.height * 0.18, 12, bounds.height - rect.height - 12);
+  popup.style.left = `${left}px`;
+  popup.style.top = `${top}px`;
+}
+
+function makePopupDraggable(popup, handle) {
+  let dragging = false;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    popup.style.zIndex = popupZIndex++;
+    const rect = popup.getBoundingClientRect();
+    offsetX = event.clientX - rect.left;
+    offsetY = event.clientY - rect.top;
+    dragging = true;
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointermove", (event) => {
+    if (!dragging) {
+      return;
+    }
+    const bounds = viewport.getBoundingClientRect();
+    const rect = popup.getBoundingClientRect();
+    let nextLeft = event.clientX - bounds.left - offsetX;
+    let nextTop = event.clientY - bounds.top - offsetY;
+    const maxLeft = Math.max(12, bounds.width - rect.width - 12);
+    const maxTop = Math.max(12, bounds.height - rect.height - 12);
+    nextLeft = clamp(nextLeft, 12, maxLeft);
+    nextTop = clamp(nextTop, 12, maxTop);
+    popup.style.left = `${nextLeft}px`;
+    popup.style.top = `${nextTop}px`;
+  });
+
+  handle.addEventListener("pointerup", (event) => {
+    dragging = false;
+    if (handle.hasPointerCapture(event.pointerId)) {
+      handle.releasePointerCapture(event.pointerId);
+    }
+  });
+}
+
+function createPopupShell(title) {
+  if (!popupLayer) {
+    return null;
+  }
+  const popup = document.createElement("div");
+  popup.className = "popup-window";
+  popup.style.zIndex = popupZIndex++;
+
+  const header = document.createElement("div");
+  header.className = "popup-header";
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "popup-title";
+  titleEl.textContent = title;
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "popup-close";
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+
+  header.append(titleEl, closeButton);
+
+  const body = document.createElement("div");
+  body.className = "popup-body";
+  const loading = document.createElement("div");
+  loading.className = "popup-loading";
+  loading.textContent = "Loading...";
+  body.append(loading);
+
+  popup.append(header, body);
+  popupLayer.append(popup);
+
+  closeButton.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+  closeButton.addEventListener("click", () => popup.remove());
+  makePopupDraggable(popup, header);
+  requestAnimationFrame(() => positionPopup(popup));
+
+  return { popup, body };
+}
+
+async function openDriverPopup(title, url) {
+  const popup = createPopupShell(title);
+  if (!popup) {
+    return;
+  }
+  const { body } = popup;
+  try {
+    const results = await Promise.allSettled(
+      driverAxes.map(async (axis) => {
+        const response = await fetch(
+          `${url}?axis=${encodeURIComponent(axis)}&refresh=true`,
+          {
+          cache: "no-store",
+          }
+        );
+        if (!response.ok) {
+          throw new Error(`${axis} ${response.status}`);
+        }
+        const rawText = await response.text();
+        try {
+          return JSON.parse(rawText);
+        } catch (err) {
+          return rawText;
+        }
+      })
+    );
+    const payload = {};
+    results.forEach((result, index) => {
+      const axis = driverAxes[index];
+      if (result.status === "fulfilled") {
+        payload[axis] = result.value;
+      } else {
+        payload[axis] = { error: `Failed to load ${axis}.` };
+      }
+    });
+    renderDriverPayload(body, payload, title);
+  } catch (err) {
+    clearElement(body);
+    const message = document.createElement("div");
+    message.className = "popup-value";
+    message.textContent = `Failed to load ${title}.`;
+    body.append(message);
+  }
+}
+
+async function postStopAxis(axis) {
+  const response = await fetch(stopUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ axis }),
+  });
+  if (!response.ok) {
+    throw new Error(`stop ${axis} ${response.status}`);
+  }
+  return response.json().catch(() => null);
+}
+
+async function triggerEmergencyStop() {
+  if (!emergencyStopButton || emergencyStopInFlight) {
+    return;
+  }
+  emergencyStopInFlight = true;
+  const label = emergencyStopButton.textContent || "EMERGENCY STOP";
+  emergencyStopButton.textContent = "STOPPING...";
+  emergencyStopButton.disabled = true;
+  const results = await Promise.allSettled(stopAxes.map((axis) => postStopAxis(axis)));
+  emergencyStopButton.disabled = false;
+  emergencyStopButton.textContent = label;
+  emergencyStopInFlight = false;
+  const hasFailure = results.some((result) => result.status === "rejected");
+  if (hasFailure) {
+    emergencyStopButton.classList.add("is-error");
+    window.setTimeout(() => {
+      emergencyStopButton.classList.remove("is-error");
+    }, 1200);
+  }
+}
+
 function parsePosLine(line) {
   const axes = {};
   const regex = /([a-zA-Z][a-zA-Z0-9]*)\s*[:=]\s*(-?\d+(?:\.\d+)?)/g;
@@ -1443,8 +1920,10 @@ async function pollPosApi() {
     if (!posData) {
       return;
     }
+    lastApiP = Number.isFinite(posData.raw.p) ? posData.raw.p : null;
     apiMarker.position.set(posData.scene.x, posData.scene.y, posData.scene.z);
     apiMarker.visible = true;
+    updateApiDirectionLine(getPAxisAngleRad());
   } catch (err) {
     console.warn("pos api poll failed", err);
     updateApiReadout(null, "error");
@@ -1496,6 +1975,7 @@ function handleResize() {
       viewCubeCamera.updateProjectionMatrix();
     }
   }
+  syncEmergencyStopSizing();
 }
 
 function onPointerDown(event) {
@@ -1577,8 +2057,9 @@ function onPointerMove(event) {
         const angle = THREE.MathUtils.radToDeg(
           Math.atan2(intersection.z - discCenter.z, intersection.x - discCenter.x)
         );
-        const nextR = (angle + 360) % 360;
-        rAxisInput.value = nextR.toFixed(0);
+        const nextDeg = (angle + 360) % 360;
+        const nextPos = clampInputValue(rDegreesToPos(nextDeg), rAxisInput);
+        rAxisInput.value = nextPos.toFixed(0);
         updateScene();
       }
     }
@@ -1693,6 +2174,24 @@ if (viewReadout) {
   });
 }
 
+if (driverStatusButton) {
+  driverStatusButton.addEventListener("click", () => {
+    openDriverPopup("Driver Status", driverStatusUrl);
+  });
+}
+
+if (driverSettingsButton) {
+  driverSettingsButton.addEventListener("click", () => {
+    openDriverPopup("Driver Settings", driverSettingsUrl);
+  });
+}
+
+if (emergencyStopButton) {
+  emergencyStopButton.addEventListener("click", () => {
+    triggerEmergencyStop();
+  });
+}
+
 setupAxisTuningControls();
 setupDirectControlPanel();
 
@@ -1735,6 +2234,7 @@ window.addEventListener("resize", handleResize);
 handleResize();
 updateScene();
 startPosPolling();
+startApiStatusPolling();
 
 function animate(time) {
   if (!renderer) {
