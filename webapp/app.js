@@ -852,6 +852,40 @@ const apiPosY = document.getElementById("apiPosY");
 const apiPosP = document.getElementById("apiPosP");
 const apiPosR = document.getElementById("apiPosR");
 const apiPosStatus = document.getElementById("apiPosStatus");
+const directControlPanel = document.getElementById("directControlPanel");
+const directControlToggle = document.getElementById("directControlToggle");
+const directControlIntervalInput = document.getElementById("directControlInterval");
+const axisTuningControls = [
+  {
+    axis: "y",
+    velInput: document.getElementById("axisVelY"),
+    velOutput: document.getElementById("axisVelYVal"),
+    accInput: document.getElementById("axisAccY"),
+    accOutput: document.getElementById("axisAccYVal"),
+  },
+  {
+    axis: "x",
+    velInput: document.getElementById("axisVelX"),
+    velOutput: document.getElementById("axisVelXVal"),
+    accInput: document.getElementById("axisAccX"),
+    accOutput: document.getElementById("axisAccXVal"),
+  },
+  {
+    axis: "p",
+    velInput: document.getElementById("axisVelP"),
+    velOutput: document.getElementById("axisVelPVal"),
+    accInput: document.getElementById("axisAccP"),
+    accOutput: document.getElementById("axisAccPVal"),
+  },
+  {
+    axis: "r",
+    velInput: document.getElementById("axisVelR"),
+    velOutput: document.getElementById("axisVelRVal"),
+    accInput: document.getElementById("axisAccR"),
+    accOutput: document.getElementById("axisAccRVal"),
+  },
+];
+const axisApplyButton = document.getElementById("axisApply");
 
 if (labelsToggleInput) {
   axisLabelGroup.visible = labelsToggleInput.checked;
@@ -943,8 +977,12 @@ function updateScene() {
   updateCoordLabels();
 }
 
-const posApiUrl = "http://192.168.178.222:8001/api/pos";
-const posPollIntervalMs = 200;
+const apiBaseUrl = "http://192.168.178.222:8001/api";
+const posApiUrl = `${apiBaseUrl}/pos`;
+const maxVelocityUrl = `${apiBaseUrl}/maxvelocity`;
+const maxAccelUrl = `${apiBaseUrl}/maxaccel`;
+const moveAbsUrl = `${apiBaseUrl}/moveabs`;
+const posPollIntervalMs = 50;
 let posPollTimer = null;
 let posFetchInFlight = false;
 
@@ -957,6 +995,344 @@ function readNumeric(value) {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+const velocitySteps = [100, 250, 500, 750, 1000];
+const accelSteps = [25, 50, 100, 250, 500];
+const axisTuningStorageKey = "scanbot.axisTuning.v1";
+const axisTuningDefaults = {
+  y: { velocity: 500, accel: 100 },
+  x: { velocity: 500, accel: 100 },
+  p: { velocity: 500, accel: 100 },
+  r: { velocity: 500, accel: 100 },
+};
+const directControlDefaultIntervalSec = 5;
+let directControlTimer = null;
+let lastMoveAbsPayload = null;
+let lastApiStatus = null;
+let lastApiHomed = null;
+
+function getClosestStepIndex(steps, value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  let closestIndex = 0;
+  let closestDelta = Infinity;
+  steps.forEach((step, index) => {
+    const delta = Math.abs(step - value);
+    if (delta < closestDelta) {
+      closestDelta = delta;
+      closestIndex = index;
+    }
+  });
+  return closestIndex;
+}
+
+function getStepValueFromInput(steps, inputEl) {
+  if (!inputEl) {
+    return steps[0];
+  }
+  const rawIndex = Number.parseInt(inputEl.value, 10);
+  const safeIndex = Number.isFinite(rawIndex)
+    ? clamp(rawIndex, 0, steps.length - 1)
+    : 0;
+  return steps[safeIndex];
+}
+
+function loadAxisTuning() {
+  let parsed = null;
+  try {
+    const stored = localStorage.getItem(axisTuningStorageKey);
+    if (stored) {
+      parsed = JSON.parse(stored);
+    }
+  } catch (err) {
+    parsed = null;
+  }
+  const next = {};
+  Object.keys(axisTuningDefaults).forEach((axis) => {
+    const axisDefaults = axisTuningDefaults[axis];
+    const axisData = parsed && typeof parsed === "object" ? parsed[axis] : null;
+    const velocity = Number.parseFloat(axisData?.velocity);
+    const accel = Number.parseFloat(axisData?.accel);
+    next[axis] = {
+      velocity: Number.isFinite(velocity) ? velocity : axisDefaults.velocity,
+      accel: Number.isFinite(accel) ? accel : axisDefaults.accel,
+    };
+  });
+  return next;
+}
+
+function saveAxisTuning(tuning) {
+  try {
+    localStorage.setItem(axisTuningStorageKey, JSON.stringify(tuning));
+  } catch (err) {
+    console.warn("axis tuning save failed", err);
+  }
+}
+
+function syncAxisTuningStateFromInputs(tuning, controls) {
+  controls.forEach((entry) => {
+    const velocity = getStepValueFromInput(velocitySteps, entry.velInput);
+    const accel = getStepValueFromInput(accelSteps, entry.accInput);
+    tuning[entry.axis] = { velocity, accel };
+  });
+}
+
+function setAxisControlValues(entry, tuning) {
+  const axisData = tuning[entry.axis] || axisTuningDefaults[entry.axis];
+  const velIndex = getClosestStepIndex(velocitySteps, axisData.velocity);
+  const accIndex = getClosestStepIndex(accelSteps, axisData.accel);
+  entry.velInput.value = velIndex;
+  entry.velOutput.textContent = velocitySteps[velIndex].toString();
+  entry.accInput.value = accIndex;
+  entry.accOutput.textContent = accelSteps[accIndex].toString();
+}
+
+async function postAxisSetting(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch (err) {
+      detail = "";
+    }
+    throw new Error(`axis settings ${response.status} ${detail}`.trim());
+  }
+  return response.json().catch(() => null);
+}
+
+async function applyAxisTuning(controls, tuning) {
+  syncAxisTuningStateFromInputs(tuning, controls);
+  saveAxisTuning(tuning);
+  const requests = [];
+  controls.forEach((entry) => {
+    const axisData = tuning[entry.axis];
+    if (!axisData) {
+      return;
+    }
+    const velocity = Math.round(axisData.velocity);
+    const accel = Math.round(axisData.accel);
+    requests.push(postAxisSetting(maxVelocityUrl, { axis: entry.axis, sps: velocity }));
+    requests.push(postAxisSetting(maxAccelUrl, { axis: entry.axis, sps2: accel }));
+  });
+  const results = await Promise.allSettled(requests);
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length) {
+    console.warn("axis tuning apply failed", failures);
+  }
+}
+
+function setupAxisTuningControls() {
+  if (!axisApplyButton) {
+    return;
+  }
+  const hasAllControls = axisTuningControls.every(
+    (entry) =>
+      entry.velInput &&
+      entry.velOutput &&
+      entry.accInput &&
+      entry.accOutput
+  );
+  if (!hasAllControls) {
+    return;
+  }
+  const tuningState = loadAxisTuning();
+  axisTuningControls.forEach((entry) => {
+    setAxisControlValues(entry, tuningState);
+    entry.velInput.addEventListener("input", () => {
+      const value = getStepValueFromInput(velocitySteps, entry.velInput);
+      entry.velOutput.textContent = value.toString();
+      tuningState[entry.axis].velocity = value;
+      saveAxisTuning(tuningState);
+    });
+    entry.accInput.addEventListener("input", () => {
+      const value = getStepValueFromInput(accelSteps, entry.accInput);
+      entry.accOutput.textContent = value.toString();
+      tuningState[entry.axis].accel = value;
+      saveAxisTuning(tuningState);
+    });
+  });
+  const applyLabel = axisApplyButton.textContent || "Apply";
+  axisApplyButton.addEventListener("click", async () => {
+    axisApplyButton.disabled = true;
+    axisApplyButton.textContent = "Applying...";
+    await applyAxisTuning(axisTuningControls, tuningState);
+    axisApplyButton.disabled = false;
+    axisApplyButton.textContent = applyLabel;
+  });
+}
+
+function isDirectControlAvailable(status, homed) {
+  if (!status) {
+    return false;
+  }
+  const normalizedStatus = String(status).toLowerCase();
+  return normalizedStatus === "ok" && Number(homed) === 1;
+}
+
+function updateDirectControlAvailability(status, homed) {
+  lastApiStatus = status;
+  lastApiHomed = homed;
+  if (!directControlToggle) {
+    return;
+  }
+  const available = isDirectControlAvailable(status, homed);
+  directControlToggle.disabled = !available;
+  if (directControlPanel) {
+    directControlPanel.classList.toggle("is-disabled", !available);
+  }
+  if (!available && directControlToggle.checked) {
+    directControlToggle.checked = false;
+    stopDirectControlTimer();
+  }
+}
+
+function normalizeDirectControlInterval() {
+  if (!directControlIntervalInput) {
+    return directControlDefaultIntervalSec;
+  }
+  const min = Number.parseFloat(directControlIntervalInput.min) || 1;
+  const max = Number.parseFloat(directControlIntervalInput.max) || 60;
+  let value = Number.parseFloat(directControlIntervalInput.value);
+  if (!Number.isFinite(value)) {
+    value = directControlDefaultIntervalSec;
+  }
+  value = clamp(value, min, max);
+  directControlIntervalInput.value = value.toString();
+  return value;
+}
+
+function getDirectControlIntervalMs() {
+  return normalizeDirectControlInterval() * 1000;
+}
+
+function getMoveAbsPayload() {
+  if (!yAxisInput || !xAxisInput || !pAxisInput || !rAxisInput) {
+    return null;
+  }
+  const yVal = Number.parseFloat(yAxisInput.value);
+  const xLeft = Number.parseFloat(xAxisInput.value);
+  const pVal = Number.parseFloat(pAxisInput.value);
+  const rVal = Number.parseFloat(rAxisInput.value);
+  if (
+    !Number.isFinite(yVal) ||
+    !Number.isFinite(xLeft) ||
+    !Number.isFinite(pVal) ||
+    !Number.isFinite(rVal)
+  ) {
+    return null;
+  }
+  const posValues = sceneToPos(xLeft, yVal);
+  if (!Number.isFinite(posValues.x) || !Number.isFinite(posValues.y)) {
+    return null;
+  }
+  const pDisplay = (-pVal / 90) * 255;
+  return {
+    x: Math.round(posValues.x),
+    y: Math.round(posValues.y),
+    p: Math.round(pDisplay),
+    r: Math.round(rVal),
+  };
+}
+
+function moveAbsPayloadChanged(nextPayload, lastPayload) {
+  if (!lastPayload) {
+    return true;
+  }
+  return ["x", "y", "p", "r"].some(
+    (key) => nextPayload[key] !== lastPayload[key]
+  );
+}
+
+async function sendMoveAbs(payload) {
+  const response = await fetch(moveAbsUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch (err) {
+      detail = "";
+    }
+    throw new Error(`moveabs ${response.status} ${detail}`.trim());
+  }
+  return response.json().catch(() => null);
+}
+
+async function directControlTick() {
+  if (!directControlToggle || !directControlToggle.checked) {
+    return;
+  }
+  if (!isDirectControlAvailable(lastApiStatus, lastApiHomed)) {
+    return;
+  }
+  const payload = getMoveAbsPayload();
+  if (!payload) {
+    return;
+  }
+  if (!moveAbsPayloadChanged(payload, lastMoveAbsPayload)) {
+    return;
+  }
+  try {
+    await sendMoveAbs(payload);
+    lastMoveAbsPayload = payload;
+  } catch (err) {
+    console.warn("direct control moveabs failed", err);
+  }
+}
+
+function stopDirectControlTimer() {
+  if (directControlTimer) {
+    window.clearInterval(directControlTimer);
+    directControlTimer = null;
+  }
+}
+
+function startDirectControlTimer() {
+  stopDirectControlTimer();
+  if (!directControlToggle || !directControlToggle.checked) {
+    return;
+  }
+  const intervalMs = getDirectControlIntervalMs();
+  directControlTimer = window.setInterval(directControlTick, intervalMs);
+  directControlTick();
+}
+
+function setupDirectControlPanel() {
+  if (!directControlToggle) {
+    return;
+  }
+  updateDirectControlAvailability(lastApiStatus, lastApiHomed);
+  normalizeDirectControlInterval();
+  directControlToggle.addEventListener("change", () => {
+    if (directControlToggle.checked) {
+      lastMoveAbsPayload = null;
+      startDirectControlTimer();
+      return;
+    }
+    stopDirectControlTimer();
+  });
+  if (directControlIntervalInput) {
+    directControlIntervalInput.addEventListener("change", () => {
+      normalizeDirectControlInterval();
+      if (directControlToggle.checked) {
+        startDirectControlTimer();
+      }
+    });
+  }
 }
 
 function parsePosLine(line) {
@@ -1004,7 +1380,7 @@ function extractPosFromPayload(payload) {
     return null;
   }
   const axes = {};
-  ["x", "y", "z", "x1", "x2", "p", "r"].forEach((key) => {
+  ["x", "y", "z", "x1", "x2", "p", "r", "homed"].forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(payload, key)) {
       const numeric = readNumeric(payload[key]);
       if (numeric !== null) {
@@ -1032,6 +1408,7 @@ function extractPosFromPayload(payload) {
   }
 
   const mapped = posToScene(rawX, rawY);
+  const homed = axes.homed ?? null;
   return {
     raw: {
       x: rawX,
@@ -1045,6 +1422,7 @@ function extractPosFromPayload(payload) {
       y: mapped.y,
       z: Number.isFinite(rawZ) ? rawZ : 0,
     },
+    homed: Number.isFinite(homed) ? homed : null,
   };
 }
 
@@ -1060,6 +1438,7 @@ async function pollPosApi() {
     }
     const data = await response.json();
     const posData = extractPosFromPayload(data);
+    updateDirectControlAvailability(data.status, posData ? posData.homed : null);
     updateApiReadout(posData ? posData.raw : null, data.status);
     if (!posData) {
       return;
@@ -1069,6 +1448,7 @@ async function pollPosApi() {
   } catch (err) {
     console.warn("pos api poll failed", err);
     updateApiReadout(null, "error");
+    updateDirectControlAvailability("error", null);
   } finally {
     posFetchInFlight = false;
   }
@@ -1312,6 +1692,9 @@ if (viewReadout) {
     }
   });
 }
+
+setupAxisTuningControls();
+setupDirectControlPanel();
 
 window.addEventListener("keydown", (event) => {
   if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {

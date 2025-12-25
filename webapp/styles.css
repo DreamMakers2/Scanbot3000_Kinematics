@@ -103,6 +103,52 @@ body {
   box-shadow: 0 20px 40px rgba(31, 42, 42, 0.12);
 }
 
+.direct-control-panel {
+  position: relative;
+  width: min(340px, 90vw);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 12px 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 36px rgba(31, 42, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.direct-control-panel.is-disabled .toggle {
+  opacity: 0.6;
+}
+
+.direct-control-panel.is-disabled .toggle label {
+  cursor: not-allowed;
+}
+
+.direct-control-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.direct-control-row label {
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.direct-control-row input[type="number"] {
+  width: 72px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(31, 42, 42, 0.15);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink-strong);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  text-align: right;
+}
+
 .hud-title {
   font-weight: 600;
   text-transform: uppercase;
@@ -263,6 +309,110 @@ output {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.axis-tuning-panel {
+  position: absolute;
+  right: 32px;
+  bottom: 32px;
+  width: 320px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 18px 30px rgba(31, 42, 42, 0.12);
+  backdrop-filter: blur(10px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.axis-tuning-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.axis-tuning-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.axis-tuning-row {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.axis-tag {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-strong);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-top: 4px;
+}
+
+.axis-tuning-controls {
+  display: grid;
+  gap: 6px;
+}
+
+.axis-tuning-control {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.axis-metric {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
+.axis-tuning-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent-3);
+}
+
+.axis-tuning-panel output {
+  min-width: 46px;
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.axis-apply {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: var(--accent-2);
+  color: white;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(15, 124, 156, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.axis-apply:disabled {
+  cursor: progress;
+  opacity: 0.7;
+  box-shadow: none;
+}
+
+.axis-apply:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 20px rgba(15, 124, 156, 0.32);
 }
 
 .pos-title {
@@ -436,6 +586,12 @@ output {
     width: 170px;
   }
 
+  .axis-tuning-panel {
+    right: 16px;
+    bottom: 16px;
+    width: 280px;
+  }
+
   #viewCube {
     width: 140px;
     height: 140px;
@@ -471,6 +627,10 @@ output {
   .pos-panel {
     top: 210px;
     width: 160px;
+  }
+
+  .axis-tuning-panel {
+    width: 240px;
   }
 
   #viewCube {
