@@ -22,10 +22,33 @@ Notes:
 
 Controls:
 - Sliders: Y-axis, X-axis, P-axis (deflection), R-axis (rotation)
-- Toggles: Lock to origin, Axis labels, Coordinate labels
+- Toggles: Lock to origin, Axis labels, Coordinate labels (off by default)
+- Direct control: Enable Direct Control and set the interval
+- Scan path: Scan radius (default 320), waypoints, repeat cycles, start direction,
+  dry run, progress/estimate, start button
+- Controls panel: Click the title to collapse/expand (collapsed by default)
 - Mouse: Left drag to orbit, Middle button drag to pan, Wheel to zoom
 - Keyboard: WASD to move the view target
 - Viewcube: Click faces to snap view, use the selector to switch camera mode
+
+## Scan Path Mode
+
+The scan path is a quarter-circle arc around the scan origin in the XY plane.
+If the nominal arc exceeds axis limits, the path is clamped to the bounds,
+creating straight segments along the limits before returning to the arc.
+The resulting path is sampled into the configured number of waypoints.
+
+At each waypoint the system:
+- Moves X/Y/P to the waypoint (P is locked to the scan origin)
+- Rotates the R axis by 360°
+- Proceeds to the next waypoint
+
+The path is traversed forward, then reversed back to the start, repeating for
+the configured number of cycles. On the reverse path, the R rotation runs in
+the opposite direction to avoid accumulating position on one side.
+
+Completion is gated using the coordinated motion status (`/coordstatus`), and
+dry run executes the same sequence in software without calling the API.
 
 ## Python Prototype
 

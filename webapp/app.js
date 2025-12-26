@@ -510,7 +510,7 @@ function initViewCube() {
 
   viewCubeScene = new THREE.Scene();
   viewCubeCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 20);
-  viewCubeCamera.position.set(4.5, 4.5, 4.5);
+  viewCubeCamera.position.set(6.75, 6.75, 6.75);
   viewCubeCamera.lookAt(0, 0, 0);
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
@@ -978,6 +978,12 @@ const scanRepeatsInput = document.getElementById("scanRepeats");
 const scanStartDirectionInput = document.getElementById("scanStartDirection");
 const scanDryRunInput = document.getElementById("scanDryRun");
 const scanStartButton = document.getElementById("scanStart");
+const scanProgressText = document.getElementById("scanProgressText");
+const scanProgressFill = document.getElementById("scanProgressFill");
+const scanEstimateText = document.getElementById("scanEstimate");
+const controlsPanel = document.querySelector(".hud");
+const controlsToggle = document.getElementById("controlsToggle");
+const controlsToggleIcon = document.querySelector("#controlsToggle .hud-title-icon");
 
 const yAxisVal = document.getElementById("yAxisVal");
 const xAxisVal = document.getElementById("xAxisVal");
@@ -1159,6 +1165,7 @@ const maxAccelUrl = `${apiBaseUrl}/maxaccel`;
 const moveAbsUrl = `${apiBaseUrl}/moveabs`;
 const driverStatusUrl = `${apiBaseUrl}/driverstatus`;
 const driverSettingsUrl = `${apiBaseUrl}/driversettings`;
+const coordStatusUrl = `${apiBaseUrl}/coordstatus`;
 const stopUrl = `${apiBaseUrl}/stop`;
 const posPollIntervalMs = 50;
 const apiStatusPollIntervalMs = 1000;
@@ -1181,6 +1188,47 @@ function readNumeric(value) {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function parseCoordStatusState(payload) {
+  if (!payload) {
+    return null;
+  }
+  if (typeof payload === "string") {
+    return payload.toLowerCase();
+  }
+  if (typeof payload === "object") {
+    const direct = payload.state ?? payload.status ?? null;
+    if (typeof direct === "string") {
+      return direct.toLowerCase();
+    }
+    const nestedCandidates = [payload.data, payload.result, payload.coordstatus, payload.payload];
+    for (const candidate of nestedCandidates) {
+      if (candidate && typeof candidate.state === "string") {
+        return candidate.state.toLowerCase();
+      }
+    }
+  }
+  return null;
+}
+
+async function fetchCoordStatusState() {
+  try {
+    const response = await fetch(`${coordStatusUrl}?refresh=true`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`coordstatus ${response.status}`);
+    }
+    const rawText = await response.text();
+    let payload = rawText;
+    try {
+      payload = JSON.parse(rawText);
+    } catch (err) {
+      payload = rawText;
+    }
+    return parseCoordStatusState(payload);
+  } catch (err) {
+    return null;
+  }
 }
 
 function setApiStatus(isOnline) {
@@ -1273,7 +1321,7 @@ let lastMoveAbsPayload = null;
 let lastApiStatus = null;
 let lastApiHomed = null;
 const scanDefaults = {
-  radius: 240,
+  radius: 320,
   waypoints: 9,
   repeats: 3,
   startDirection: "forward",
@@ -1286,6 +1334,12 @@ const scanState = {
   dryRun: false,
 };
 let scanWaypoints = [];
+const scanEstimateWindow = 6;
+const scanProgressState = {
+  totalSteps: 0,
+  completedSteps: 0,
+  stepDurations: [],
+};
 
 function getClosestStepIndex(steps, value) {
   if (!Number.isFinite(value)) {
@@ -1614,7 +1668,7 @@ const scanMoveTolerance = 1.5;
 const scanRotateTolerance = 10;
 const scanMoveTimeoutMs = 20000;
 const scanRotateTimeoutMs = 25000;
-const scanPollIntervalMs = 120;
+const scanPollIntervalMs = 60;
 
 function readScanRangeValue(inputEl, fallback) {
   if (!inputEl) {
@@ -1759,6 +1813,75 @@ function resamplePathPoints(points, count) {
     });
   }
   return sampled;
+}
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "--";
+  }
+  const totalSeconds = Math.round(ms / 1000);
+  const seconds = totalSeconds % 60;
+  const minutesTotal = Math.floor(totalSeconds / 60);
+  const minutes = minutesTotal % 60;
+  const hours = Math.floor(minutesTotal / 60);
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function getAverageStepDuration() {
+  if (!scanProgressState.stepDurations.length) {
+    return null;
+  }
+  const sum = scanProgressState.stepDurations.reduce((total, value) => total + value, 0);
+  return sum / scanProgressState.stepDurations.length;
+}
+
+function updateScanProgressUI() {
+  if (!scanProgressText || !scanProgressFill || !scanEstimateText) {
+    return;
+  }
+  const total = scanProgressState.totalSteps;
+  const completed = scanProgressState.completedSteps;
+  const percent = total > 0 ? (completed / total) * 100 : 0;
+  const clampedPercent = clamp(percent, 0, 100);
+  scanProgressFill.style.width = `${clampedPercent.toFixed(1)}%`;
+  if (total > 0) {
+    scanProgressText.textContent = `${Math.round(clampedPercent)}% (${completed}/${total})`;
+  } else {
+    scanProgressText.textContent = "0%";
+  }
+  const avg = getAverageStepDuration();
+  if (avg && total > 0) {
+    scanEstimateText.textContent = formatDuration(avg * total);
+  } else {
+    scanEstimateText.textContent = "--";
+  }
+}
+
+function resetScanProgress(totalSteps) {
+  scanProgressState.totalSteps = Math.max(0, totalSteps);
+  scanProgressState.completedSteps = 0;
+  scanProgressState.stepDurations = [];
+  updateScanProgressUI();
+}
+
+function recordScanStep(durationMs) {
+  if (Number.isFinite(durationMs) && durationMs > 0) {
+    scanProgressState.stepDurations.push(durationMs);
+    if (scanProgressState.stepDurations.length > scanEstimateWindow) {
+      scanProgressState.stepDurations.shift();
+    }
+  }
+  scanProgressState.completedSteps = Math.min(
+    scanProgressState.totalSteps,
+    scanProgressState.completedSteps + 1
+  );
+  updateScanProgressUI();
 }
 
 function updateWaypointMarkers(points) {
@@ -1952,16 +2075,26 @@ function sleep(ms) {
 
 async function waitForMove(target, timeoutMs) {
   const start = performance.now();
+  let sawActive = false;
   while (performance.now() - start < timeoutMs) {
     if (!scanState.active) {
       return false;
     }
+    let withinTolerance = false;
     if (lastApiScene) {
       const dx = lastApiScene.x - target.x;
       const dy = lastApiScene.y - target.y;
-      if (Math.hypot(dx, dy) <= scanMoveTolerance) {
-        return true;
-      }
+      withinTolerance = Math.hypot(dx, dy) <= scanMoveTolerance;
+    }
+    if (withinTolerance) {
+      return true;
+    }
+    const coordState = await fetchCoordStatusState();
+    if (coordState === "queued" || coordState === "running") {
+      sawActive = true;
+    }
+    if (coordState === "idle" && sawActive) {
+      return true;
     }
     await sleep(scanPollIntervalMs);
   }
@@ -1970,22 +2103,33 @@ async function waitForMove(target, timeoutMs) {
 
 async function waitForRotation(targetR, timeoutMs) {
   const start = performance.now();
+  let sawActive = false;
   while (performance.now() - start < timeoutMs) {
     if (!scanState.active) {
       return false;
     }
+    let withinTolerance = false;
     if (lastApiRaw && Number.isFinite(lastApiRaw.r)) {
       const delta = Math.abs(lastApiRaw.r - targetR);
-      if (delta <= scanRotateTolerance) {
-        return true;
-      }
+      withinTolerance = delta <= scanRotateTolerance;
+    }
+    if (withinTolerance) {
+      return true;
+    }
+    const coordState = await fetchCoordStatusState();
+    if (coordState === "queued" || coordState === "running") {
+      sawActive = true;
+    }
+    if (coordState === "idle" && sawActive) {
+      return true;
     }
     await sleep(scanPollIntervalMs);
   }
   return false;
 }
 
-async function executeWaypoint(point, currentR) {
+async function executeWaypoint(point, currentR, rotationDirection = 1) {
+  const stepStart = performance.now();
   const deflection = getLockOriginDeflection(point.x, point.y);
   const pos = sceneToPos(point.x, point.y);
   const pDisplay = clamp(deflectionToPDisplay(deflection), -255, 255);
@@ -1994,12 +2138,13 @@ async function executeWaypoint(point, currentR) {
     applyDryRunState(point, deflection, currentR);
     updateScene();
     await sleep(scanPollIntervalMs);
-    const nextR = currentR + rAxisPosPerRev;
+    const nextR = currentR + rotationDirection * rAxisPosPerRev;
     ensureRInputMax(nextR);
     setAxisInputsFromScan(point, deflection, nextR, false);
     applyDryRunState(point, deflection, nextR);
     updateScene();
     await sleep(scanPollIntervalMs);
+    recordScanStep(performance.now() - stepStart);
     return nextR;
   }
   const payload = {
@@ -2008,31 +2153,32 @@ async function executeWaypoint(point, currentR) {
     p: Math.round(pDisplay),
     r: Math.round(currentR),
   };
+  const nextR = currentR + rotationDirection * rAxisPosPerRev;
+  ensureRInputMax(nextR);
+  const rotatePayload = { ...payload, r: Math.round(nextR) };
   await sendMoveAbs(payload);
   setAxisInputsFromScan(point, deflection, currentR);
   const reached = await waitForMove(point, scanMoveTimeoutMs);
   if (!reached) {
     console.warn("scan waypoint move timed out", payload);
   }
-  const nextR = currentR + rAxisPosPerRev;
-  ensureRInputMax(nextR);
-  const rotatePayload = { ...payload, r: Math.round(nextR) };
   await sendMoveAbs(rotatePayload);
   setAxisInputsFromScan(point, deflection, nextR);
   const rotated = await waitForRotation(nextR, scanRotateTimeoutMs);
   if (!rotated) {
     console.warn("scan rotation timed out", rotatePayload);
   }
+  recordScanStep(performance.now() - stepStart);
   return nextR;
 }
 
-async function runWaypointPass(waypoints, startR) {
+async function runWaypointPass(waypoints, startR, rotationDirection) {
   let currentR = startR;
   for (const point of waypoints) {
     if (!scanState.active) {
       break;
     }
-    currentR = await executeWaypoint(point, currentR);
+    currentR = await executeWaypoint(point, currentR, rotationDirection);
   }
   return currentR;
 }
@@ -2062,14 +2208,22 @@ async function startScanSequence() {
     ? [...scanWaypoints].reverse()
     : [...scanWaypoints];
   const reverse = [...forward].reverse();
+  const reversePass = reverse.length > 1 ? reverse.slice(1) : reverse;
+  const forwardPassLoop = forward.length > 1 ? forward.slice(1) : forward;
+  const totalSteps =
+    forward.length +
+    reversePass.length +
+    Math.max(0, settings.repeats - 1) * (forwardPassLoop.length + reversePass.length);
+  resetScanProgress(totalSteps);
   scanState.dryRun = isDryRun;
   setScanModeActive(true);
   scanStartButton.classList.add("is-running");
   let currentR = getCurrentRPos();
   try {
     for (let cycle = 0; cycle < settings.repeats; cycle += 1) {
-      currentR = await runWaypointPass(forward, currentR);
-      currentR = await runWaypointPass(reverse, currentR);
+      const forwardPass = cycle === 0 ? forward : forwardPassLoop;
+      currentR = await runWaypointPass(forwardPass, currentR, 1);
+      currentR = await runWaypointPass(reversePass, currentR, -1);
     }
   } catch (err) {
     console.warn("scan sequence failed", err);
@@ -2085,6 +2239,7 @@ function setupScanControls() {
     return;
   }
   updateScanPreview();
+  updateScanProgressUI();
   if (scanRadiusInput) {
     scanRadiusInput.addEventListener("input", updateScanPreview);
   }
@@ -2279,6 +2434,7 @@ async function openDriverPopup(title, url) {
   if (!popup) {
     return;
   }
+  popup.popup.classList.add("popup-window--driver");
   const { body } = popup;
   try {
     const results = await Promise.allSettled(
@@ -2698,6 +2854,20 @@ if (cameraModeSelect) {
   setCameraMode(cameraModeSelect.value);
 }
 
+if (controlsToggle && controlsPanel) {
+  const setControlsCollapsed = (collapsed) => {
+    controlsPanel.classList.toggle("is-collapsed", collapsed);
+    if (controlsToggleIcon) {
+      controlsToggleIcon.textContent = collapsed ? "^" : "v";
+    }
+  };
+  setControlsCollapsed(controlsPanel.classList.contains("is-collapsed"));
+  controlsToggle.addEventListener("click", () => {
+    const nextCollapsed = !controlsPanel.classList.contains("is-collapsed");
+    setControlsCollapsed(nextCollapsed);
+  });
+}
+
 if (viewReadout) {
   viewReadout.addEventListener("click", async () => {
     const text = viewReadout.textContent || "";
@@ -2808,7 +2978,7 @@ function animate(time) {
     if (Math.abs(axisViewDirection.dot(viewUp)) > 0.95) {
       viewUp.set(0, 0, 1);
     }
-    viewCubeCamera.position.copy(axisViewDirection).multiplyScalar(5);
+    viewCubeCamera.position.copy(axisViewDirection).multiplyScalar(7.5);
     viewCubeCamera.up.copy(viewUp);
     viewCubeCamera.lookAt(viewCubeScene.position);
     if (viewCubeLabels.length) {
