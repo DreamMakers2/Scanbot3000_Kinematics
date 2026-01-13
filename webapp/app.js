@@ -27,9 +27,401 @@ if (renderer) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
 }
 
 const scene = new THREE.Scene();
+
+const planetSettings = {
+  terrain: {
+    type: 3,
+    amplitude: 1.5,
+    sharpness: 1.975,
+    offset: -0.172,
+    period: 0.7581,
+    persistence: 0.42,
+    lacunarity: 1.888,
+    octaves: 8,
+    centerFalloffRadius: 0,
+    centerFalloffStrength: 1,
+    verticalOffset: 0,
+  },
+  lighting: {
+    ambient: 0.01,
+    diffuse: 1,
+    specular: 2,
+    shininess: 10,
+    direction: new THREE.Vector3(1, 1, 1),
+    color: new THREE.Color(1, 1, 1),
+  },
+  layers: {
+    color1: new THREE.Color(0.014, 0.117, 0.279),
+    color2: new THREE.Color(0.08, 0.527, 0.351),
+    color3: new THREE.Color(0.62, 0.516, 0.372),
+    color4: new THREE.Color(0.149, 0.254, 0.084),
+    color5: new THREE.Color(0.15, 0.15, 0.15),
+    transition2: 0.071,
+    transition3: 0.215,
+    transition4: 0.372,
+    transition5: 1.2,
+    blend12: 0.152,
+    blend23: 0.152,
+    blend34: 0.104,
+    blend45: 0.168,
+    scale: 1.2,
+  },
+  bump: {
+    strength: 1,
+    offset: 0.0001,
+  },
+  bloom: {
+    threshold: 0.71,
+    strength: 0.396,
+    radius: 1.29,
+  },
+};
+
+const planetNoiseFunctions = `
+const float PI = 3.14159265;
+const int MAX_OCTAVES = 8;
+
+vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
+
+float simplex3(vec3 v) { 
+  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+  const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+
+  vec3 i  = floor(v + dot(v, C.yyy) );
+  vec3 x0 =   v - i + dot(i, C.xxx) ;
+
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min( g.xyz, l.zxy );
+  vec3 i2 = max( g.xyz, l.zxy );
+
+  vec3 x1 = x0 - i1 + 1.0 * C.xxx;
+  vec3 x2 = x0 - i2 + 2.0 * C.xxx;
+  vec3 x3 = x0 - 1. + 3.0 * C.xxx;
+
+  i = mod(i, 289.0 ); 
+  vec4 p = permute( permute( permute( 
+            i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+          + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
+          + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+
+  float n_ = 1.0/7.0;
+  vec3  ns = n_ * D.wyz - D.xzx;
+
+  vec4 j = p - 49.0 * floor(p * ns.z *ns.z);
+
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_ );
+
+  vec4 x = x_ *ns.x + ns.yyyy;
+  vec4 y = y_ *ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+
+  vec4 b0 = vec4( x.xy, y.xy );
+  vec4 b1 = vec4( x.zw, y.zw );
+
+  vec4 s0 = floor(b0)*2.0 + 1.0;
+  vec4 s1 = floor(b1)*2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+
+  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+
+  vec3 p0 = vec3(a0.xy,h.x);
+  vec3 p1 = vec3(a0.zw,h.y);
+  vec3 p2 = vec3(a1.xy,h.z);
+  vec3 p3 = vec3(a1.zw,h.w);
+
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+  p0 *= norm.x;
+  p1 *= norm.y;
+  p2 *= norm.z;
+  p3 *= norm.w;
+
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
+                                dot(p2,x2), dot(p3,x3) ) );
+}
+
+float fractal3(      
+  vec3 v,
+  float sharpness,
+  float period,
+  float persistence,
+  float lacunarity,
+  int octaves
+) {
+  float n = 0.0;
+  float a = 1.0;
+  float max_amp = 0.0;
+  float P = period;
+
+  for (int i = 0; i < MAX_OCTAVES; i++) {
+    if (i >= octaves) {
+      break;
+    }
+    n += a * simplex3(v / P);
+    a *= persistence;
+    max_amp += a;
+    P /= lacunarity;
+  }
+
+  return max_amp > 0.0 ? (n / max_amp) : 0.0;
+}
+
+float terrainHeight(
+  int type,
+  vec3 v,
+  float amplitude,
+  float sharpness,
+  float offset,
+  float period,
+  float persistence,
+  float lacunarity,
+  int octaves
+) {
+  float h = 0.0;
+
+  if (type == 1) {
+    h = amplitude * simplex3(v / period);
+  } else if (type == 2) {
+    h = amplitude * fractal3(
+      v,
+      sharpness,
+      period, 
+      persistence, 
+      lacunarity, 
+      octaves);
+    h = amplitude * pow(max(0.0, (h + 1.0) / 2.0), sharpness);
+  } else if (type == 3) {
+    h = fractal3(
+      v,
+      sharpness,
+      period, 
+      persistence, 
+      lacunarity, 
+      octaves);
+    h = amplitude * pow(max(0.0, 1.0 - abs(h)), sharpness);
+  }
+
+  return max(0.0, h + offset);
+}
+`;
+
+const terrainVertexShader = `
+${planetNoiseFunctions}
+attribute vec3 tangent;
+
+uniform int type;
+uniform float amplitude;
+uniform float sharpness;
+uniform float offset;
+uniform float period;
+uniform float persistence;
+uniform float lacunarity;
+uniform int octaves;
+uniform sampler2D heightMap;
+uniform float heightMapStrength;
+uniform float heightScale;
+uniform float centerFalloffRadius;
+uniform float centerFalloffStrength;
+uniform float terrainScale;
+
+varying vec3 fragPosition;
+varying vec3 fragNormal;
+varying vec3 fragTangent;
+varying vec3 fragBitangent;
+varying vec2 fragUv;
+
+void main() {
+  vec3 basePosition = vec3(position.x, 0.0, position.z);
+  vec3 samplePos = basePosition / terrainScale;
+  float h = terrainHeight(
+    type,
+    samplePos,
+    amplitude,
+    sharpness,
+    offset,
+    period,
+    persistence,
+    lacunarity,
+    octaves
+  );
+  float mapHeight = texture2D(heightMap, uv).r;
+  float hMap = pow(mapHeight, 1.55) * heightMapStrength;
+  float heightValue = h + hMap;
+  float centerDistance = length(basePosition.xz);
+  float falloffRadius = max(centerFalloffRadius, 0.0001);
+  float centerFalloff = smoothstep(0.0, falloffRadius, centerDistance);
+  float centerScale = mix(centerFalloffStrength, 1.0, centerFalloff);
+  vec3 displaced = position + normal * (heightValue * centerScale * heightScale);
+
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+  fragPosition = basePosition;
+  fragNormal = normal;
+  fragTangent = tangent;
+  fragBitangent = cross(normal, tangent);
+  fragUv = uv;
+}
+`;
+
+const terrainFragmentShader = `
+${planetNoiseFunctions}
+uniform int type;
+uniform float amplitude;
+uniform float sharpness;
+uniform float offset;
+uniform float period;
+uniform float persistence;
+uniform float lacunarity;
+uniform int octaves;
+
+uniform vec3 color1;
+uniform vec3 color2;
+uniform vec3 color3;
+uniform vec3 color4;
+uniform vec3 color5;
+uniform float transition2;
+uniform float transition3;
+uniform float transition4;
+uniform float transition5;
+uniform float blend12;
+uniform float blend23;
+uniform float blend34;
+uniform float blend45;
+
+uniform float bumpStrength;
+uniform float bumpOffset;
+
+uniform float ambientIntensity;
+uniform float diffuseIntensity;
+uniform float specularIntensity;
+uniform float shininess;
+uniform vec3 lightDirection;
+uniform vec3 lightColor;
+
+uniform sampler2D heightMap;
+uniform float heightMapStrength;
+uniform float heightScale;
+uniform float centerFalloffRadius;
+uniform float centerFalloffStrength;
+uniform float terrainScale;
+
+varying vec3 fragPosition;
+varying vec3 fragNormal;
+varying vec3 fragTangent;
+varying vec3 fragBitangent;
+varying vec2 fragUv;
+
+void main() {
+  vec3 samplePos = fragPosition / terrainScale;
+  float h = terrainHeight(
+    type,
+    samplePos,
+    amplitude, 
+    sharpness,
+    offset,
+    period, 
+    persistence, 
+    lacunarity, 
+    octaves);
+  float mapHeight = texture2D(heightMap, fragUv).r;
+  float hMap = pow(mapHeight, 1.55) * heightMapStrength;
+  float heightValue = h + hMap;
+  float centerDistance = length(fragPosition.xz);
+  float falloffRadius = max(centerFalloffRadius, 0.0001);
+  float centerFalloff = smoothstep(0.0, falloffRadius, centerDistance);
+  float centerScale = mix(centerFalloffStrength, 1.0, centerFalloff);
+  float heightScaled = heightValue * centerScale * heightScale;
+
+  vec3 dx = bumpOffset * fragTangent;
+  vec3 dy = bumpOffset * fragBitangent;
+  vec3 samplePosDx = vec3(fragPosition.x + dx.x, 0.0, fragPosition.z + dx.z) / terrainScale;
+  vec3 samplePosDy = vec3(fragPosition.x + dy.x, 0.0, fragPosition.z + dy.z) / terrainScale;
+  vec2 uvDx = fragUv + vec2(dx.x, dx.z) / (terrainScale * 2.0);
+  vec2 uvDy = fragUv + vec2(dy.x, dy.z) / (terrainScale * 2.0);
+  float h_dx = terrainHeight(
+    type,
+    samplePosDx,
+    amplitude,
+    sharpness,
+    offset,
+    period,
+    persistence,
+    lacunarity,
+    octaves
+  ) + pow(texture2D(heightMap, uvDx).r, 1.55) * heightMapStrength;
+  float h_dy = terrainHeight(
+    type,
+    samplePosDy,
+    amplitude,
+    sharpness,
+    offset,
+    period,
+    persistence,
+    lacunarity,
+    octaves
+  ) + pow(texture2D(heightMap, uvDy).r, 1.55) * heightMapStrength;
+
+  float centerScaleDx = mix(
+    centerFalloffStrength,
+    1.0,
+    smoothstep(0.0, falloffRadius, length(vec2(fragPosition.x + dx.x, fragPosition.z + dx.z)))
+  );
+  float centerScaleDy = mix(
+    centerFalloffStrength,
+    1.0,
+    smoothstep(0.0, falloffRadius, length(vec2(fragPosition.x + dy.x, fragPosition.z + dy.z)))
+  );
+
+  vec3 pos = vec3(fragPosition.x, heightScaled, fragPosition.z);
+  vec3 pos_dx = vec3(fragPosition.x + dx.x, h_dx * centerScaleDx * heightScale, fragPosition.z + dx.z);
+  vec3 pos_dy = vec3(fragPosition.x + dy.x, h_dy * centerScaleDy * heightScale, fragPosition.z + dy.z);
+  vec3 bumpNormal = normalize(cross(pos_dx - pos, pos_dy - pos));
+  vec3 N = normalize(mix(fragNormal, bumpNormal, bumpStrength));
+  vec3 L = normalize(-lightDirection);
+  vec3 V = normalize(cameraPosition - pos);
+  vec3 R = normalize(reflect(L, N));
+
+  float diffuse = diffuseIntensity * max(0.0, dot(N, -L));
+  float heightValueScaled = heightValue * centerScale;
+  float specularFalloff = clamp((transition3 - heightValueScaled) / transition3, 0.0, 1.0);
+  float specular = max(0.0, specularFalloff * specularIntensity * pow(dot(V, R), shininess));
+  float light = ambientIntensity + diffuse + specular;
+
+  vec3 color12 = mix(
+    color1, 
+    color2, 
+    smoothstep(transition2 - blend12, transition2 + blend12, heightValueScaled));
+
+  vec3 color123 = mix(
+    color12, 
+    color3, 
+    smoothstep(transition3 - blend23, transition3 + blend23, heightValueScaled));
+
+  vec3 color1234 = mix(
+    color123, 
+    color4, 
+    smoothstep(transition4 - blend34, transition4 + blend34, heightValueScaled));
+
+  vec3 finalColor = mix(
+    color1234, 
+    color5, 
+    smoothstep(transition5 - blend45, transition5 + blend45, heightValueScaled));
+  
+  gl_FragColor = vec4(light * finalColor * lightColor, 1.0);
+}
+`;
+
 let axisRenderer = null;
 let axisScene = null;
 let axisCamera = null;
@@ -39,6 +431,14 @@ let viewCubeCamera = null;
 let viewCube = null;
 let viewCubeMesh = null;
 let viewCubeLabels = [];
+let composer = null;
+let renderPass = null;
+let bloomPass = null;
+let terrainMesh = null;
+let heightmapTexture = null;
+let heightmapData = null;
+let heightmapWidth = 0;
+let heightmapHeight = 0;
 const viewCubeRaycaster = new THREE.Raycaster();
 const viewCubePointer = new THREE.Vector2();
 const axisViewDirection = new THREE.Vector3();
@@ -50,7 +450,7 @@ const dragState = {
   type: null,
 };
 
-const perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 10000);
+const perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 12000);
 const orthoSize = 800;
 const orthographicCamera = new THREE.OrthographicCamera(
   -orthoSize,
@@ -58,7 +458,7 @@ const orthographicCamera = new THREE.OrthographicCamera(
   orthoSize,
   -orthoSize,
   0.1,
-  10000
+  12000
 );
 let camera = perspectiveCamera;
 
@@ -121,6 +521,9 @@ function setCameraMode(mode) {
     orthographicCamera.updateProjectionMatrix();
   }
   updateCamera();
+  if (renderPass) {
+    renderPass.camera = camera;
+  }
 }
 
 function snapDirection(direction) {
@@ -227,54 +630,472 @@ function panCamera(dx, dy) {
 
 updateCamera();
 
-const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+function initPostProcessing() {
+  if (!renderer || !THREE.EffectComposer || !THREE.RenderPass || !THREE.UnrealBloomPass) {
+    return;
+  }
+  composer = new THREE.EffectComposer(renderer);
+  renderPass = new THREE.RenderPass(scene, camera);
+  composer.addPass(renderPass);
+  bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(1, 1),
+    planetSettings.bloom.strength,
+    planetSettings.bloom.radius,
+    planetSettings.bloom.threshold
+  );
+  composer.addPass(bloomPass);
+}
+
+initPostProcessing();
+
+function updateLighting() {
+  ambient.intensity = planetSettings.lighting.ambient;
+  sunLight.intensity = planetSettings.lighting.diffuse;
+  fillLight.intensity = planetSettings.lighting.diffuse * 0.18;
+  rimLight.intensity = planetSettings.lighting.diffuse * 0.22;
+  const lightDir = planetSettings.lighting.direction.clone().normalize();
+  sunLight.position.set(lightDir.x, lightDir.y, lightDir.z).multiplyScalar(1000);
+  sunLight.color.copy(planetSettings.lighting.color);
+  sunTarget.position.set(0, 0, 0);
+  sunTarget.updateMatrixWorld();
+  updateTerrainUniforms();
+}
+
+function updateBloom() {
+  if (!bloomPass) {
+    return;
+  }
+  bloomPass.threshold = planetSettings.bloom.threshold;
+  bloomPass.strength = planetSettings.bloom.strength;
+  bloomPass.radius = planetSettings.bloom.radius;
+}
+
+const ambient = new THREE.AmbientLight(0xfff1e1, planetSettings.lighting.ambient);
 scene.add(ambient);
 
-const directional = new THREE.DirectionalLight(0xffffff, 0.8);
-directional.position.set(80, 120, 60);
-scene.add(directional);
+const hemisphere = new THREE.HemisphereLight(0xf7f1e8, 0x2a1b12, 0.2);
+scene.add(hemisphere);
 
-function createFloorGradientTexture() {
+const sunLight = new THREE.DirectionalLight(0xfff1d6, planetSettings.lighting.diffuse);
+sunLight.position.set(900, 900, 700);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.bias = -0.00035;
+sunLight.shadow.normalBias = 0.02;
+sunLight.shadow.camera.near = 200;
+sunLight.shadow.camera.far = 2800;
+sunLight.shadow.camera.left = -900;
+sunLight.shadow.camera.right = 900;
+sunLight.shadow.camera.top = 900;
+sunLight.shadow.camera.bottom = -900;
+scene.add(sunLight);
+
+const sunTarget = new THREE.Object3D();
+sunTarget.position.set(120, 40, 0);
+scene.add(sunTarget);
+sunLight.target = sunTarget;
+
+const fillLight = new THREE.PointLight(0xffb86c, 0.18, 900);
+fillLight.position.set(-220, 260, 300);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0x86c9ff, 0.22);
+rimLight.position.set(-420, 320, -340);
+scene.add(rimLight);
+
+updateLighting();
+
+function createEnvironmentTexture() {
+  const width = 512;
+  const height = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  const skyGradient = ctx.createLinearGradient(0, 0, 0, height);
+  skyGradient.addColorStop(0, "#fff1dd");
+  skyGradient.addColorStop(0.45, "#f5d7b4");
+  skyGradient.addColorStop(1, "#7ea3b4");
+  ctx.fillStyle = skyGradient;
+  ctx.fillRect(0, 0, width, height);
+
+  const sun = ctx.createRadialGradient(
+    width * 0.72,
+    height * 0.28,
+    12,
+    width * 0.72,
+    height * 0.28,
+    180
+  );
+  sun.addColorStop(0, "rgba(255, 245, 226, 0.85)");
+  sun.addColorStop(1, "rgba(255, 245, 226, 0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, width, height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createSkyTexture() {
+  const width = 1024;
+  const height = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  const skyGradient = ctx.createLinearGradient(0, 0, 0, height);
+  skyGradient.addColorStop(0, "#f8f4e8");
+  skyGradient.addColorStop(0.38, "#f3d8b2");
+  skyGradient.addColorStop(0.7, "#9fc0d4");
+  skyGradient.addColorStop(1, "#6f8ea8");
+  ctx.fillStyle = skyGradient;
+  ctx.fillRect(0, 0, width, height);
+
+  const horizonGlow = ctx.createLinearGradient(0, height * 0.45, 0, height * 0.8);
+  horizonGlow.addColorStop(0, "rgba(255, 239, 214, 0.7)");
+  horizonGlow.addColorStop(1, "rgba(255, 239, 214, 0)");
+  ctx.fillStyle = horizonGlow;
+  ctx.fillRect(0, 0, width, height);
+
+  const sun = ctx.createRadialGradient(
+    width * 0.18,
+    height * 0.3,
+    16,
+    width * 0.18,
+    height * 0.3,
+    240
+  );
+  sun.addColorStop(0, "rgba(255, 248, 232, 0.9)");
+  sun.addColorStop(1, "rgba(255, 248, 232, 0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, width, height);
+
+  for (let i = 0; i < 36; i += 1) {
+    const cx = Math.random() * width;
+    const cy = height * 0.18 + Math.random() * height * 0.45;
+    const rx = 90 + Math.random() * 220;
+    const ry = 26 + Math.random() * 70;
+    const alpha = 0.03 + Math.random() * 0.06;
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, Math.random() * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const haze = ctx.createLinearGradient(0, height * 0.64, 0, height);
+  haze.addColorStop(0, "rgba(255, 243, 224, 0)");
+  haze.addColorStop(1, "rgba(255, 243, 224, 0.12)");
+  ctx.fillStyle = haze;
+  ctx.fillRect(0, 0, width, height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function hash2(x, y) {
+  const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function smoothstep(value) {
+  return value * value * (3 - 2 * value);
+}
+
+function smoothstepRange(edge0, edge1, x) {
+  if (edge0 === edge1) {
+    return x < edge0 ? 0 : 1;
+  }
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return smoothstep(t);
+}
+
+function valueNoise(x, y) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+  const sx = smoothstep(x - x0);
+  const sy = smoothstep(y - y0);
+
+  const n00 = hash2(x0, y0);
+  const n10 = hash2(x1, y0);
+  const n01 = hash2(x0, y1);
+  const n11 = hash2(x1, y1);
+
+  const nx0 = n00 + (n10 - n00) * sx;
+  const nx1 = n01 + (n11 - n01) * sx;
+  return nx0 + (nx1 - nx0) * sy;
+}
+
+function fractalNoise2(x, y, settings) {
+  let n = 0;
+  let amplitude = 1;
+  let maxAmp = 0;
+  let period = settings.period;
+  for (let i = 0; i < settings.octaves; i += 1) {
+    const noiseValue = valueNoise(x / period, y / period) * 2 - 1;
+    n += amplitude * noiseValue;
+    maxAmp += amplitude;
+    amplitude *= settings.persistence;
+    period /= settings.lacunarity;
+  }
+  if (maxAmp === 0) {
+    return 0;
+  }
+  return n / maxAmp;
+}
+
+function terrainHeightValue(type, x, z, settings) {
+  const baseNoise = valueNoise(x / settings.period, z / settings.period) * 2 - 1;
+  let h = 0;
+  if (type === 1) {
+    h = settings.amplitude * baseNoise;
+  } else if (type === 2) {
+    const fractal = fractalNoise2(x, z, settings);
+    h = settings.amplitude * Math.pow(Math.max(0, (fractal + 1) / 2), settings.sharpness);
+  } else {
+    const fractal = fractalNoise2(x, z, settings);
+    h = settings.amplitude * Math.pow(Math.max(0, 1 - Math.abs(fractal)), settings.sharpness);
+  }
+  return Math.max(0, h + settings.offset);
+}
+
+function createHeightmapTerrain(options) {
+  const { size, segments, baseY } = options;
+  const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
+  geometry.rotateX(-Math.PI / 2);
+  const positions = geometry.attributes.position;
+  const tangents = new Float32Array(positions.count * 3);
+  for (let i = 0; i < positions.count; i += 1) {
+    const offset = i * 3;
+    tangents[offset] = 1;
+    tangents[offset + 1] = 0;
+    tangents[offset + 2] = 0;
+  }
+  geometry.setAttribute("tangent", new THREE.BufferAttribute(tangents, 3));
+
+  const uniforms = {
+    type: { value: planetSettings.terrain.type },
+    amplitude: { value: planetSettings.terrain.amplitude },
+    sharpness: { value: planetSettings.terrain.sharpness },
+    offset: { value: planetSettings.terrain.offset },
+    period: { value: planetSettings.terrain.period },
+    persistence: { value: planetSettings.terrain.persistence },
+    lacunarity: { value: planetSettings.terrain.lacunarity },
+    octaves: { value: planetSettings.terrain.octaves },
+    color1: { value: planetSettings.layers.color1.clone() },
+    color2: { value: planetSettings.layers.color2.clone() },
+    color3: { value: planetSettings.layers.color3.clone() },
+    color4: { value: planetSettings.layers.color4.clone() },
+    color5: { value: planetSettings.layers.color5.clone() },
+    transition2: { value: planetSettings.layers.transition2 },
+    transition3: { value: planetSettings.layers.transition3 },
+    transition4: { value: planetSettings.layers.transition4 },
+    transition5: { value: planetSettings.layers.transition5 },
+    blend12: { value: planetSettings.layers.blend12 },
+    blend23: { value: planetSettings.layers.blend23 },
+    blend34: { value: planetSettings.layers.blend34 },
+    blend45: { value: planetSettings.layers.blend45 },
+    bumpStrength: { value: planetSettings.bump.strength },
+    bumpOffset: { value: planetSettings.bump.offset },
+    ambientIntensity: { value: planetSettings.lighting.ambient },
+    diffuseIntensity: { value: planetSettings.lighting.diffuse },
+    specularIntensity: { value: planetSettings.lighting.specular },
+    shininess: { value: planetSettings.lighting.shininess },
+    lightDirection: { value: planetSettings.lighting.direction.clone().normalize() },
+    lightColor: { value: planetSettings.lighting.color.clone() },
+    heightMap: { value: heightmapTexture },
+    heightMapStrength: { value: 0 },
+    heightScale: { value: terrainMaxHeight },
+    centerFalloffRadius: { value: planetSettings.terrain.centerFalloffRadius },
+    centerFalloffStrength: { value: planetSettings.terrain.centerFalloffStrength },
+    terrainScale: { value: size * 0.5 },
+  };
+
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: terrainVertexShader,
+    fragmentShader: terrainFragmentShader,
+    side: THREE.DoubleSide,
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.y = baseY;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function createWoodTexture() {
   const size = 512;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
-  const gradient = ctx.createRadialGradient(
-    size / 2,
-    size / 2,
-    size * 0.06,
-    size / 2,
-    size / 2,
-    size * 0.52
+
+  const base = { r: 154, g: 104, b: 65 };
+  const plankCount = 9;
+  const plankWidth = size / plankCount;
+  const clampChannel = (value) => Math.min(255, Math.max(0, Math.round(value)));
+
+  for (let i = 0; i < plankCount; i += 1) {
+    const x = Math.round(i * plankWidth);
+    const shade = (Math.random() - 0.5) * 26;
+    ctx.fillStyle = `rgb(${clampChannel(base.r + shade)}, ${clampChannel(
+      base.g + shade
+    )}, ${clampChannel(base.b + shade)})`;
+    ctx.fillRect(x, 0, Math.ceil(plankWidth) + 1, size);
+
+    const grainCount = 26;
+    for (let g = 0; g < grainCount; g += 1) {
+      const gx = x + Math.random() * plankWidth;
+      const gy = Math.random() * size;
+      const length = 40 + Math.random() * 120;
+      const wobble = (Math.random() - 0.5) * 6;
+      ctx.strokeStyle = `rgba(72, 45, 24, ${0.06 + Math.random() * 0.16})`;
+      ctx.lineWidth = 0.8 + Math.random() * 1.4;
+      ctx.beginPath();
+      ctx.moveTo(gx, gy);
+      ctx.quadraticCurveTo(
+        gx + wobble,
+        gy + length * 0.5,
+        gx + (Math.random() - 0.5) * 3,
+        gy + length
+      );
+      ctx.stroke();
+    }
+
+    const knotCount = Math.random() > 0.6 ? 2 : 1;
+    for (let k = 0; k < knotCount; k += 1) {
+      const kx = x + plankWidth * (0.2 + Math.random() * 0.6);
+      const ky = size * (0.15 + Math.random() * 0.7);
+      const radius = 6 + Math.random() * 10;
+      const knot = ctx.createRadialGradient(kx, ky, 2, kx, ky, radius);
+      knot.addColorStop(0, "rgba(82, 52, 30, 0.65)");
+      knot.addColorStop(1, "rgba(82, 52, 30, 0)");
+      ctx.fillStyle = knot;
+      ctx.beginPath();
+      ctx.arc(kx, ky, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const nickCount = 6;
+    for (let n = 0; n < nickCount; n += 1) {
+      const nx = x + Math.random() * plankWidth;
+      const ny = Math.random() * size;
+      const length = 6 + Math.random() * 14;
+      ctx.strokeStyle = "rgba(54, 36, 22, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(nx - length * 0.5, ny);
+      ctx.lineTo(nx + length * 0.5, ny);
+      ctx.stroke();
+    }
+  }
+
+  for (let i = 0; i <= plankCount; i += 1) {
+    const x = Math.round(i * plankWidth);
+    ctx.fillStyle = "rgba(40, 28, 18, 0.35)";
+    ctx.fillRect(x, 0, 2, size);
+  }
+
+  const noise = ctx.getImageData(0, 0, size, size);
+  const data = noise.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 14;
+    data[i] = clampChannel(data[i] + n);
+    data[i + 1] = clampChannel(data[i + 1] + n);
+    data[i + 2] = clampChannel(data[i + 2] + n);
+  }
+  ctx.putImageData(noise, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(8, 8);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createFloorSheenTexture() {
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+
+  const glow = ctx.createRadialGradient(
+    size * 0.55,
+    size * 0.45,
+    size * 0.05,
+    size * 0.55,
+    size * 0.45,
+    size * 0.65
   );
-  gradient.addColorStop(0, "rgba(234, 226, 208, 0.98)");
-  gradient.addColorStop(0.45, "rgba(196, 217, 208, 0.75)");
-  gradient.addColorStop(1, "rgba(196, 217, 208, 0.38)");
-  ctx.fillStyle = gradient;
+  glow.addColorStop(0, "rgba(255, 241, 214, 0.6)");
+  glow.addColorStop(1, "rgba(255, 241, 214, 0)");
+  ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
-const floorSize = 2400;
-const floorGradient = new THREE.Mesh(
+const environmentTexture = createEnvironmentTexture();
+scene.background = environmentTexture;
+scene.environment = environmentTexture;
+
+const floorSize = 1440;
+const woodTexture = createWoodTexture();
+if (renderer) {
+  woodTexture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+}
+const woodMaterial = new THREE.MeshStandardMaterial({
+  map: woodTexture,
+  roughness: 0.78,
+  metalness: 0.06,
+  bumpMap: woodTexture,
+  bumpScale: 3,
+  envMapIntensity: 0.45,
+});
+const woodFloor = new THREE.Mesh(new THREE.PlaneGeometry(floorSize, floorSize), woodMaterial);
+woodFloor.rotation.x = -Math.PI / 2;
+woodFloor.receiveShadow = true;
+scene.add(woodFloor);
+
+const floorSheen = new THREE.Mesh(
   new THREE.PlaneGeometry(floorSize, floorSize),
-  new THREE.MeshBasicMaterial({
-    map: createFloorGradientTexture(),
+  new THREE.MeshPhysicalMaterial({
+    map: createFloorSheenTexture(),
+    color: 0xffffff,
     transparent: true,
-    opacity: 1,
+    opacity: 0.18,
+    roughness: 0.15,
+    metalness: 0,
+    clearcoat: 1,
+    clearcoatRoughness: 0.2,
+    envMapIntensity: 0.5,
     depthWrite: false,
   })
 );
-floorGradient.rotation.x = -Math.PI / 2;
-scene.add(floorGradient);
+floorSheen.rotation.x = -Math.PI / 2;
+floorSheen.renderOrder = 1;
+floorSheen.receiveShadow = true;
+scene.add(floorSheen);
 
-const floorGrid = new THREE.GridHelper(floorSize, 8, 0x7f8b8a, 0xaab7b4);
-floorGrid.material.opacity = 0.32;
+const floorGrid = new THREE.GridHelper(floorSize, 12, 0xffffff, 0xffffff);
+floorGrid.material.opacity = 0.08;
 floorGrid.material.transparent = true;
+floorGrid.material.depthWrite = false;
+floorGrid.renderOrder = 2;
 scene.add(floorGrid);
+
 
 const baseFrameColor = 0x0d0f12;
 const xAxisColor = 0x2ecc71;
@@ -296,8 +1117,146 @@ const apiDirectionFadeLength = 100;
 const apiDirectionFadeSegments = 10;
 const scanOrigin = new THREE.Vector3(x0, 27, 0);
 const floorOffset = baseOffset - axisThickness / 2;
-floorGradient.position.y = floorOffset;
-floorGrid.position.y = floorOffset;
+woodFloor.position.y = floorOffset;
+floorSheen.position.y = floorOffset + 0.4;
+floorGrid.position.y = floorOffset + 0.8;
+const terrainGroup = new THREE.Group();
+scene.add(terrainGroup);
+
+const terrainSize = 19600;
+const terrainSegments = 420;
+const terrainMaxHeight = 1100;
+const terrainBaseY = floorOffset - 220;
+const terrainCeilingY = floorOffset - 8;
+const terrainHeightmapStrength = 0;
+
+function initHeightmapData(image) {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, 0, 0);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  heightmapData = img.data;
+  heightmapWidth = canvas.width;
+  heightmapHeight = canvas.height;
+}
+
+function sampleHeightmap(u, v) {
+  if (!heightmapData || !heightmapWidth || !heightmapHeight) {
+    return 0;
+  }
+  const x = Math.floor(clamp(u, 0, 1) * (heightmapWidth - 1));
+  const y = Math.floor(clamp(1 - v, 0, 1) * (heightmapHeight - 1));
+  const idx = (y * heightmapWidth + x) * 4;
+  return (heightmapData[idx] + heightmapData[idx + 1] + heightmapData[idx + 2]) / (3 * 255);
+}
+
+function computeCenterMaxHeight() {
+  const radius = floorSize * 0.55;
+  const samples = 22;
+  let maxHeightValue = 0;
+  for (let i = 0; i <= samples; i += 1) {
+    const x = ((i / samples) * 2 - 1) * radius;
+    for (let j = 0; j <= samples; j += 1) {
+      const z = ((j / samples) * 2 - 1) * radius;
+      if (Math.hypot(x, z) > radius) {
+        continue;
+      }
+      const u = x / terrainSize + 0.5;
+      const v = z / terrainSize + 0.5;
+      const mapHeight = Math.pow(sampleHeightmap(u, v), 1.55) * terrainHeightmapStrength;
+      const noiseHeight = terrainHeightValue(
+        planetSettings.terrain.type,
+        x / (terrainSize * 0.5),
+        z / (terrainSize * 0.5),
+        planetSettings.terrain
+      );
+      const heightValue = Math.max(0, mapHeight + noiseHeight);
+      const centerScale = smoothstepRange(0, planetSettings.terrain.centerFalloffRadius, Math.hypot(x, z));
+      const centerStrength = planetSettings.terrain.centerFalloffStrength;
+      const falloffScale = centerStrength + (1 - centerStrength) * centerScale;
+      const heightScaled = heightValue * falloffScale * terrainMaxHeight;
+      if (heightScaled > maxHeightValue) {
+        maxHeightValue = heightScaled;
+      }
+    }
+  }
+  return maxHeightValue;
+}
+
+function updateTerrainClearance() {
+  if (!terrainMesh) {
+    return;
+  }
+  const baseY = terrainBaseY + planetSettings.terrain.verticalOffset;
+  const centerMaxHeight = computeCenterMaxHeight();
+  const clearanceOffset = Math.min(0, terrainCeilingY - (baseY + centerMaxHeight));
+  terrainMesh.position.y = baseY + clearanceOffset;
+}
+
+function updateTerrainUniforms() {
+  if (!terrainMesh || !terrainMesh.material || !terrainMesh.material.uniforms) {
+    return;
+  }
+  const u = terrainMesh.material.uniforms;
+  if (u.heightMap && heightmapTexture) {
+    u.heightMap.value = heightmapTexture;
+  }
+  u.type.value = planetSettings.terrain.type;
+  u.amplitude.value = planetSettings.terrain.amplitude;
+  u.sharpness.value = planetSettings.terrain.sharpness;
+  u.offset.value = planetSettings.terrain.offset;
+  u.period.value = planetSettings.terrain.period;
+  u.persistence.value = planetSettings.terrain.persistence;
+  u.lacunarity.value = planetSettings.terrain.lacunarity;
+  u.octaves.value = planetSettings.terrain.octaves;
+  u.color1.value.copy(planetSettings.layers.color1);
+  u.color2.value.copy(planetSettings.layers.color2);
+  u.color3.value.copy(planetSettings.layers.color3);
+  u.color4.value.copy(planetSettings.layers.color4);
+  u.color5.value.copy(planetSettings.layers.color5);
+  u.transition2.value = planetSettings.layers.transition2;
+  u.transition3.value = planetSettings.layers.transition3;
+  u.transition4.value = planetSettings.layers.transition4;
+  u.transition5.value = planetSettings.layers.transition5;
+  u.blend12.value = planetSettings.layers.blend12;
+  u.blend23.value = planetSettings.layers.blend23;
+  u.blend34.value = planetSettings.layers.blend34;
+  u.blend45.value = planetSettings.layers.blend45;
+  u.bumpStrength.value = planetSettings.bump.strength;
+  u.bumpOffset.value = planetSettings.bump.offset;
+  u.ambientIntensity.value = planetSettings.lighting.ambient;
+  u.diffuseIntensity.value = planetSettings.lighting.diffuse;
+  u.specularIntensity.value = planetSettings.lighting.specular;
+  u.shininess.value = planetSettings.lighting.shininess;
+  u.lightDirection.value.copy(planetSettings.lighting.direction).normalize();
+  u.lightColor.value.copy(planetSettings.lighting.color);
+  u.heightMapStrength.value = terrainHeightmapStrength;
+  u.heightScale.value = terrainMaxHeight;
+  u.centerFalloffRadius.value = planetSettings.terrain.centerFalloffRadius;
+  u.centerFalloffStrength.value = planetSettings.terrain.centerFalloffStrength;
+}
+
+function rebuildTerrain() {
+  if (!heightmapTexture || !heightmapTexture.image) {
+    return;
+  }
+  if (terrainMesh) {
+    terrainGroup.remove(terrainMesh);
+    terrainMesh.geometry.dispose();
+    terrainMesh.material.dispose();
+  }
+  terrainMesh = createHeightmapTerrain({
+    size: terrainSize,
+    segments: terrainSegments,
+    baseY: terrainBaseY + planetSettings.terrain.verticalOffset,
+  });
+  terrainGroup.add(terrainMesh);
+  updateTerrainClearance();
+  updateLighting();
+}
+
 const posXOrigin = 1665;
 const posXScale = 5;
 const posYOrigin = 625;
@@ -589,132 +1548,240 @@ function initViewCube() {
 
 initViewCube();
 
-const baseFrameMaterial = new THREE.MeshStandardMaterial({
+function makeAnodizedMaterial(color, options = {}) {
+  const emissiveIntensity = options.emissiveIntensity ?? 0.18;
+  return new THREE.MeshPhysicalMaterial({
+    color,
+    roughness: options.roughness ?? 0.32,
+    metalness: options.metalness ?? 0.45,
+    clearcoat: options.clearcoat ?? 0.55,
+    clearcoatRoughness: options.clearcoatRoughness ?? 0.28,
+    envMapIntensity: options.envMapIntensity ?? 0.9,
+    emissive: new THREE.Color(color).multiplyScalar(emissiveIntensity),
+  });
+}
+
+function setShadow(mesh, options = {}) {
+  mesh.castShadow = options.cast ?? true;
+  mesh.receiveShadow = options.receive ?? false;
+}
+
+const baseFrameMaterial = new THREE.MeshPhysicalMaterial({
   color: baseFrameColor,
-  roughness: 0.4,
-  metalness: 0.05,
+  roughness: 0.55,
+  metalness: 0.25,
+  clearcoat: 0.2,
+  clearcoatRoughness: 0.65,
+  envMapIntensity: 0.6,
 });
 const baseFrameTube = new THREE.Mesh(
   new THREE.BoxGeometry(x1 - x0, axisThickness, axisThickness),
   baseFrameMaterial
 );
 baseFrameTube.position.set((x0 + x1) / 2, baseOffset, 0);
+setShadow(baseFrameTube, { receive: true });
 scene.add(baseFrameTube);
 
-const yAxisMaterial = new THREE.MeshStandardMaterial({
-  color: yAxisColor,
-  roughness: 0.35,
-  metalness: 0.1,
-});
-const xAxisMaterial = new THREE.MeshStandardMaterial({
-  color: xAxisColor,
-  roughness: 0.35,
-  metalness: 0.1,
-});
-const pAxisMaterial = new THREE.MeshStandardMaterial({
-  color: pAxisColor,
-  roughness: 0.35,
-  metalness: 0.1,
-});
+const yAxisMaterial = makeAnodizedMaterial(yAxisColor, { emissiveIntensity: 0.14 });
+const xAxisMaterial = makeAnodizedMaterial(xAxisColor, { emissiveIntensity: 0.14 });
+const pAxisMaterial = makeAnodizedMaterial(pAxisColor, { emissiveIntensity: 0.16 });
 const verticalAxis = new THREE.Mesh(
   new THREE.BoxGeometry(axisThickness, yAxisLength, axisThickness),
   yAxisMaterial
 );
 verticalAxis.position.set(x1, baseOffset + yAxisLength / 2, 0);
+setShadow(verticalAxis, { receive: true });
 scene.add(verticalAxis);
 
-const sphereMaterial = new THREE.MeshStandardMaterial({
-  color: 0x000000,
-  roughness: 0.4,
-  metalness: 0.1,
+const sphereMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0x0a0b0f,
+  roughness: 0.35,
+  metalness: 0.55,
+  clearcoat: 0.25,
+  clearcoatRoughness: 0.45,
+  envMapIntensity: 0.85,
 });
 const anchorGeometry = new THREE.SphereGeometry(12, 18, 18);
 const originMarker = new THREE.Mesh(anchorGeometry, sphereMaterial);
 originMarker.position.set(0, 0, 0);
+setShadow(originMarker);
 scene.add(originMarker);
 const stageMarker = new THREE.Mesh(anchorGeometry, sphereMaterial);
 stageMarker.position.set(x1, baseOffset, 0);
+setShadow(stageMarker);
 scene.add(stageMarker);
 
 const discRadius = 200;
 const discThickness = 8;
 const discCenter = new THREE.Vector3(0, -4, 0);
 const discTopY = discCenter.y + discThickness / 2;
+const discSurfaceMaterial = makeAnodizedMaterial(rAxisColor, {
+  emissiveIntensity: 0.12,
+  roughness: 0.28,
+  metalness: 0.6,
+  clearcoat: 0.7,
+});
+const discSideMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0x0a0b0f,
+  roughness: 0.3,
+  metalness: 0.5,
+  clearcoat: 0.3,
+  clearcoatRoughness: 0.5,
+  envMapIntensity: 0.8,
+});
 const disc = new THREE.Mesh(
   new THREE.CylinderGeometry(discRadius, discRadius, discThickness, 80),
-  [
-    new THREE.MeshStandardMaterial({
-      color: rAxisColor,
-      transparent: false,
-      opacity: 1,
-      roughness: 0.5,
-    }),
-    new THREE.MeshStandardMaterial({
-      color: rAxisColor,
-      transparent: false,
-      opacity: 1,
-      roughness: 0.5,
-    }),
-    new THREE.MeshStandardMaterial({
-      color: 0x000000,
-      roughness: 0.4,
-      metalness: 0.1,
-    }),
-  ]
+  [discSurfaceMaterial, discSurfaceMaterial, discSideMaterial]
 );
 disc.position.copy(discCenter);
+setShadow(disc, { receive: true });
 scene.add(disc);
 const discTopMarker = new THREE.Mesh(
   new THREE.SphereGeometry(7, 16, 16),
   sphereMaterial
 );
 discTopMarker.position.set(discCenter.x, discTopY, discCenter.z);
+setShadow(discTopMarker);
 scene.add(discTopMarker);
+
+const discHalo = new THREE.Mesh(
+  new THREE.RingGeometry(discRadius * 0.6, discRadius * 0.92, 80),
+  new THREE.MeshBasicMaterial({
+    color: 0x9ee7ff,
+    transparent: true,
+    opacity: 0.18,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    depthTest: false,
+  })
+);
+discHalo.rotation.x = -Math.PI / 2;
+discHalo.position.set(discCenter.x, discTopY + 1.2, discCenter.z);
+discHalo.renderOrder = 3;
+scene.add(discHalo);
+
+function createGlowSprite(color, size, opacity) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  const gradient = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  gradient.addColorStop(0, "rgba(255, 255, 255, 0.9)");
+  gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 128, 128);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(size, size, 1);
+  return sprite;
+}
 
 const scanOriginMarker = new THREE.Mesh(
   new THREE.SphereGeometry(9, 16, 16),
-  new THREE.MeshStandardMaterial({
+  new THREE.MeshPhysicalMaterial({
     color: 0xffd200,
-    roughness: 0.35,
-    metalness: 0.1,
+    roughness: 0.22,
+    metalness: 0.2,
+    clearcoat: 0.6,
+    clearcoatRoughness: 0.2,
+    envMapIntensity: 0.7,
   })
 );
 scanOriginMarker.position.copy(scanOrigin);
+setShadow(scanOriginMarker);
 scene.add(scanOriginMarker);
 
-const scanPathLine = new THREE.Line(
-  new THREE.BufferGeometry(),
-  new THREE.LineBasicMaterial({
+const scanPathGroup = new THREE.Group();
+scene.add(scanPathGroup);
+
+let scanPathLine = null;
+let scanPathGlow = null;
+let scanPathGeometry = null;
+let scanPathMaterial = null;
+let scanPathGlowMaterial = null;
+
+if (THREE.Line2 && THREE.LineGeometry && THREE.LineMaterial) {
+  scanPathGeometry = new THREE.LineGeometry();
+  scanPathMaterial = new THREE.LineMaterial({
     color: 0xffd200,
+    linewidth: 6,
     transparent: true,
-    opacity: 0.9,
-  })
-);
-scanPathLine.renderOrder = 4;
-scene.add(scanPathLine);
+    opacity: 0.95,
+  });
+  scanPathMaterial.resolution.set(1, 1);
+  scanPathLine = new THREE.Line2(scanPathGeometry, scanPathMaterial);
+  scanPathLine.computeLineDistances();
+  scanPathLine.renderOrder = 6;
+  scanPathGroup.add(scanPathLine);
+
+  scanPathGlowMaterial = new THREE.LineMaterial({
+    color: 0xfff3b0,
+    linewidth: 14,
+    transparent: true,
+    opacity: 0.25,
+    blending: THREE.AdditiveBlending,
+  });
+  scanPathGlowMaterial.resolution.set(1, 1);
+  scanPathGlowMaterial.depthWrite = false;
+  scanPathGlowMaterial.depthTest = false;
+  scanPathGlow = new THREE.Line2(scanPathGeometry, scanPathGlowMaterial);
+  scanPathGlow.renderOrder = 5;
+  scanPathGroup.add(scanPathGlow);
+} else {
+  scanPathLine = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      color: 0xffd200,
+      transparent: true,
+      opacity: 0.9,
+    })
+  );
+  scanPathLine.renderOrder = 4;
+  scanPathGroup.add(scanPathLine);
+}
 
 const waypointMarkerGroup = new THREE.Group();
 waypointMarkerGroup.renderOrder = 5;
 scene.add(waypointMarkerGroup);
 const waypointMarkerGeometry = new THREE.SphereGeometry(4, 14, 14);
-const waypointMarkerMaterial = new THREE.MeshStandardMaterial({
+const waypointMarkerMaterial = new THREE.MeshPhysicalMaterial({
   color: 0x8fd3ff,
   emissive: 0x8fd3ff,
-  emissiveIntensity: 0.6,
-  roughness: 0.3,
-  metalness: 0.1,
+  emissiveIntensity: 0.75,
+  roughness: 0.25,
+  metalness: 0.15,
+  clearcoat: 0.5,
+  clearcoatRoughness: 0.2,
+  envMapIntensity: 0.8,
 });
 
 const apiMarker = new THREE.Mesh(
   new THREE.SphereGeometry(6, 16, 16),
-  new THREE.MeshStandardMaterial({
+  new THREE.MeshPhysicalMaterial({
     color: apiMarkerColor,
     emissive: apiMarkerColor,
-    emissiveIntensity: 0.85,
-    roughness: 0.2,
-    metalness: 0.05,
+    emissiveIntensity: 1,
+    roughness: 0.18,
+    metalness: 0.1,
+    clearcoat: 0.6,
+    clearcoatRoughness: 0.2,
+    envMapIntensity: 0.8,
   })
 );
+const apiGlow = createGlowSprite(apiMarkerColor, 55, 0.45);
+apiMarker.add(apiGlow);
+setShadow(apiMarker);
 apiMarker.visible = false;
 scene.add(apiMarker);
 
@@ -735,29 +1802,34 @@ const rotationTip = new THREE.Mesh(
   new THREE.SphereGeometry(11, 16, 16),
   sphereMaterial
 );
+setShadow(rotationTip);
 scene.add(rotationTip);
 
 const movablePoint = new THREE.Mesh(
   new THREE.SphereGeometry(15, 20, 20),
   sphereMaterial
 );
+setShadow(movablePoint);
 scene.add(movablePoint);
 
 const xAxisTube = new THREE.Mesh(
   new THREE.BoxGeometry(xAxisLength, axisThickness, axisThickness),
   xAxisMaterial
 );
+setShadow(xAxisTube, { receive: true });
 scene.add(xAxisTube);
 const xAxisLeftPoint = new THREE.Mesh(
   new THREE.SphereGeometry(13, 18, 18),
   sphereMaterial
 );
+setShadow(xAxisLeftPoint);
 scene.add(xAxisLeftPoint);
 
 const armTube = new THREE.Mesh(
   new THREE.BoxGeometry(armLength, axisThickness, axisThickness),
   pAxisMaterial
 );
+setShadow(armTube, { receive: true });
 scene.add(armTube);
 
 const draggableObjects = [
@@ -1032,6 +2104,317 @@ const axisTuningControls = [
   },
 ];
 const axisApplyButton = document.getElementById("axisApply");
+const settingsPanel = document.getElementById("settingsPanel");
+
+function setSettingValue(id, value) {
+  const input = document.getElementById(id);
+  if (!input) {
+    return;
+  }
+  const textValue = Number.isFinite(Number(value)) ? String(value) : `${value}`;
+  input.value = textValue;
+  const output = input.closest(".settings-row")?.querySelector("output");
+  if (output) {
+    output.textContent = textValue;
+  }
+}
+
+if (settingsPanel) {
+  const settingsDefaults = [
+    ["terrainAmplitude", planetSettings.terrain.amplitude],
+    ["terrainSharpness", planetSettings.terrain.sharpness],
+    ["terrainOffset", planetSettings.terrain.offset],
+    ["terrainPeriod", planetSettings.terrain.period],
+    ["terrainPersistence", planetSettings.terrain.persistence],
+    ["terrainLacunarity", planetSettings.terrain.lacunarity],
+    ["terrainOctaves", planetSettings.terrain.octaves],
+    ["terrainVerticalOffset", planetSettings.terrain.verticalOffset],
+    ["centerFalloffRadius", planetSettings.terrain.centerFalloffRadius],
+    ["centerFalloffStrength", planetSettings.terrain.centerFalloffStrength],
+    ["transition2", planetSettings.layers.transition2],
+    ["transition3", planetSettings.layers.transition3],
+    ["transition4", planetSettings.layers.transition4],
+    ["transition5", planetSettings.layers.transition5],
+    ["blend12", planetSettings.layers.blend12],
+    ["blend23", planetSettings.layers.blend23],
+    ["blend34", planetSettings.layers.blend34],
+    ["blend45", planetSettings.layers.blend45],
+    ["lightingAmbient", planetSettings.lighting.ambient],
+    ["lightingDiffuse", planetSettings.lighting.diffuse],
+    ["lightingSpecular", planetSettings.lighting.specular],
+    ["lightingShininess", planetSettings.lighting.shininess],
+    ["lightDirX", planetSettings.lighting.direction.x],
+    ["lightDirY", planetSettings.lighting.direction.y],
+    ["lightDirZ", planetSettings.lighting.direction.z],
+    ["bumpStrength", planetSettings.bump.strength],
+    ["bumpOffset", planetSettings.bump.offset],
+    ["bloomThreshold", planetSettings.bloom.threshold],
+    ["bloomStrength", planetSettings.bloom.strength],
+    ["bloomRadius", planetSettings.bloom.radius],
+  ];
+
+  const layer1 = planetSettings.layers.color1;
+  const layer2 = planetSettings.layers.color2;
+  const layer3 = planetSettings.layers.color3;
+  const layer4 = planetSettings.layers.color4;
+  const layer5 = planetSettings.layers.color5;
+  settingsDefaults.push(
+    ["layer1Red", layer1.r],
+    ["layer1Green", layer1.g],
+    ["layer1Blue", layer1.b],
+    ["layer2Red", layer2.r],
+    ["layer2Green", layer2.g],
+    ["layer2Blue", layer2.b],
+    ["layer3Red", layer3.r],
+    ["layer3Green", layer3.g],
+    ["layer3Blue", layer3.b],
+    ["layer4Red", layer4.r],
+    ["layer4Green", layer4.g],
+    ["layer4Blue", layer4.b],
+    ["layer5Red", layer5.r],
+    ["layer5Green", layer5.g],
+    ["layer5Blue", layer5.b]
+  );
+
+  const lightColor = planetSettings.lighting.color;
+  settingsDefaults.push(
+    ["lightColorR", lightColor.r],
+    ["lightColorG", lightColor.g],
+    ["lightColorB", lightColor.b]
+  );
+
+  settingsDefaults.forEach(([id, value]) => setSettingValue(id, value));
+
+  const terrainTypeSelect = document.getElementById("terrainType");
+  if (terrainTypeSelect) {
+    terrainTypeSelect.value = String(planetSettings.terrain.type);
+    terrainTypeSelect.addEventListener("change", () => {
+      planetSettings.terrain.type = Number(terrainTypeSelect.value) || 1;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    });
+  }
+
+  const settingsHandlers = {
+    terrainAmplitude: (value) => {
+      planetSettings.terrain.amplitude = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainSharpness: (value) => {
+      planetSettings.terrain.sharpness = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainOffset: (value) => {
+      planetSettings.terrain.offset = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainPeriod: (value) => {
+      planetSettings.terrain.period = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainPersistence: (value) => {
+      planetSettings.terrain.persistence = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainLacunarity: (value) => {
+      planetSettings.terrain.lacunarity = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainOctaves: (value) => {
+      planetSettings.terrain.octaves = clamp(Math.round(value), 1, 8);
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    terrainVerticalOffset: (value) => {
+      planetSettings.terrain.verticalOffset = value;
+      updateTerrainClearance();
+    },
+    centerFalloffRadius: (value) => {
+      planetSettings.terrain.centerFalloffRadius = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    centerFalloffStrength: (value) => {
+      planetSettings.terrain.centerFalloffStrength = value;
+      updateTerrainUniforms();
+      updateTerrainClearance();
+    },
+    transition2: (value) => {
+      planetSettings.layers.transition2 = value;
+      updateTerrainUniforms();
+    },
+    transition3: (value) => {
+      planetSettings.layers.transition3 = value;
+      updateTerrainUniforms();
+    },
+    transition4: (value) => {
+      planetSettings.layers.transition4 = value;
+      updateTerrainUniforms();
+    },
+    transition5: (value) => {
+      planetSettings.layers.transition5 = value;
+      updateTerrainUniforms();
+    },
+    blend12: (value) => {
+      planetSettings.layers.blend12 = value;
+      updateTerrainUniforms();
+    },
+    blend23: (value) => {
+      planetSettings.layers.blend23 = value;
+      updateTerrainUniforms();
+    },
+    blend34: (value) => {
+      planetSettings.layers.blend34 = value;
+      updateTerrainUniforms();
+    },
+    blend45: (value) => {
+      planetSettings.layers.blend45 = value;
+      updateTerrainUniforms();
+    },
+    layer1Red: (value) => {
+      planetSettings.layers.color1.r = value;
+      updateTerrainUniforms();
+    },
+    layer1Green: (value) => {
+      planetSettings.layers.color1.g = value;
+      updateTerrainUniforms();
+    },
+    layer1Blue: (value) => {
+      planetSettings.layers.color1.b = value;
+      updateTerrainUniforms();
+    },
+    layer2Red: (value) => {
+      planetSettings.layers.color2.r = value;
+      updateTerrainUniforms();
+    },
+    layer2Green: (value) => {
+      planetSettings.layers.color2.g = value;
+      updateTerrainUniforms();
+    },
+    layer2Blue: (value) => {
+      planetSettings.layers.color2.b = value;
+      updateTerrainUniforms();
+    },
+    layer3Red: (value) => {
+      planetSettings.layers.color3.r = value;
+      updateTerrainUniforms();
+    },
+    layer3Green: (value) => {
+      planetSettings.layers.color3.g = value;
+      updateTerrainUniforms();
+    },
+    layer3Blue: (value) => {
+      planetSettings.layers.color3.b = value;
+      updateTerrainUniforms();
+    },
+    layer4Red: (value) => {
+      planetSettings.layers.color4.r = value;
+      updateTerrainUniforms();
+    },
+    layer4Green: (value) => {
+      planetSettings.layers.color4.g = value;
+      updateTerrainUniforms();
+    },
+    layer4Blue: (value) => {
+      planetSettings.layers.color4.b = value;
+      updateTerrainUniforms();
+    },
+    layer5Red: (value) => {
+      planetSettings.layers.color5.r = value;
+      updateTerrainUniforms();
+    },
+    layer5Green: (value) => {
+      planetSettings.layers.color5.g = value;
+      updateTerrainUniforms();
+    },
+    layer5Blue: (value) => {
+      planetSettings.layers.color5.b = value;
+      updateTerrainUniforms();
+    },
+    lightingAmbient: (value) => {
+      planetSettings.lighting.ambient = value;
+      updateLighting();
+    },
+    lightingDiffuse: (value) => {
+      planetSettings.lighting.diffuse = value;
+      updateLighting();
+    },
+    lightingSpecular: (value) => {
+      planetSettings.lighting.specular = value;
+      updateLighting();
+    },
+    lightingShininess: (value) => {
+      planetSettings.lighting.shininess = Math.max(0, Math.round(value));
+      updateLighting();
+    },
+    lightDirX: (value) => {
+      planetSettings.lighting.direction.x = value;
+      updateLighting();
+    },
+    lightDirY: (value) => {
+      planetSettings.lighting.direction.y = value;
+      updateLighting();
+    },
+    lightDirZ: (value) => {
+      planetSettings.lighting.direction.z = value;
+      updateLighting();
+    },
+    lightColorR: (value) => {
+      planetSettings.lighting.color.r = value;
+      updateLighting();
+    },
+    lightColorG: (value) => {
+      planetSettings.lighting.color.g = value;
+      updateLighting();
+    },
+    lightColorB: (value) => {
+      planetSettings.lighting.color.b = value;
+      updateLighting();
+    },
+    bumpStrength: (value) => {
+      planetSettings.bump.strength = value;
+      updateTerrainUniforms();
+    },
+    bumpOffset: (value) => {
+      planetSettings.bump.offset = value;
+      updateTerrainUniforms();
+    },
+    bloomThreshold: (value) => {
+      planetSettings.bloom.threshold = value;
+      updateBloom();
+    },
+    bloomStrength: (value) => {
+      planetSettings.bloom.strength = value;
+      updateBloom();
+    },
+    bloomRadius: (value) => {
+      planetSettings.bloom.radius = value;
+      updateBloom();
+    },
+  };
+
+  settingsPanel.querySelectorAll('input[type="range"]').forEach((input) => {
+    const output = input.closest(".settings-row")?.querySelector("output");
+    if (output) {
+      output.textContent = input.value;
+    }
+    input.addEventListener("input", () => {
+      if (output) {
+        output.textContent = input.value;
+      }
+      const handler = settingsHandlers[input.id];
+      if (handler) {
+        handler(Number(input.value));
+      }
+    });
+  });
+}
 
 if (labelsToggleInput) {
   axisLabelGroup.visible = labelsToggleInput.checked;
@@ -1891,6 +3274,7 @@ function updateWaypointMarkers(points) {
   const count = points.length;
   while (waypointMarkerGroup.children.length < count) {
     const marker = new THREE.Mesh(waypointMarkerGeometry, waypointMarkerMaterial);
+    setShadow(marker);
     waypointMarkerGroup.add(marker);
   }
   while (waypointMarkerGroup.children.length > count) {
@@ -1918,10 +3302,23 @@ function updateScanPreview() {
   scanWaypoints = resamplePathPoints(clamped, settings.waypoints);
   updateWaypointMarkers(scanWaypoints);
 
-  if (scanPathLine) {
-    const points = clamped.length
-      ? clamped
-      : [{ x: scanOrigin.x, y: scanOrigin.y }];
+  const points = clamped.length ? clamped : [scanOrigin, scanOrigin];
+  if (scanPathGeometry) {
+    const positions = new Float32Array(points.length * 3);
+    points.forEach((point, index) => {
+      const offset = index * 3;
+      positions[offset] = point.x;
+      positions[offset + 1] = point.y;
+      positions[offset + 2] = 0;
+    });
+    scanPathGeometry.setPositions(positions);
+    if (scanPathLine && scanPathLine.computeLineDistances) {
+      scanPathLine.computeLineDistances();
+    }
+    if (scanPathGlow && scanPathGlow.computeLineDistances) {
+      scanPathGlow.computeLineDistances();
+    }
+  } else if (scanPathLine) {
     const vectors = points.map((point) => new THREE.Vector3(point.x, point.y, 0));
     scanPathLine.geometry.setFromPoints(vectors);
   }
@@ -2656,6 +4053,18 @@ function handleResize() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(width, height, false);
   updateCameraProjection(width, height);
+  if (scanPathMaterial && scanPathMaterial.resolution) {
+    scanPathMaterial.resolution.set(width, height);
+  }
+  if (scanPathGlowMaterial && scanPathGlowMaterial.resolution) {
+    scanPathGlowMaterial.resolution.set(width, height);
+  }
+  if (composer) {
+    composer.setSize(width, height);
+  }
+  if (bloomPass && bloomPass.setSize) {
+    bloomPass.setSize(width, height);
+  }
 
   if (axisRenderer && axisCanvas) {
     const axisWidth = axisCanvas.clientWidth;
@@ -2962,8 +4371,15 @@ function animate(time) {
   lastFrameTime = time;
   updateKeyMovement(delta);
   updateViewReadout();
+  const pulse = (Math.sin(time * 0.0012) + 1) * 0.5;
+  apiGlow.material.opacity = 0.25 + pulse * 0.2;
+  discHalo.material.opacity = 0.12 + pulse * 0.08;
 
-  renderer.render(scene, camera);
+  if (composer) {
+    composer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
   if (axisRenderer && axisScene && axisCamera) {
     axisViewDirection.copy(camera.position).sub(orbit.target).normalize();
     axisCamera.position.copy(axisViewDirection).multiplyScalar(20);

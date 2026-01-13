@@ -940,6 +940,140 @@ output {
   background: var(--spin-line);
 }
 
+.settings-panel {
+  position: absolute;
+  top: 24px;
+  right: 420px;
+  width: 280px;
+  max-height: calc(100% - 48px);
+  padding: 14px 14px 16px;
+  border-radius: 14px;
+  background: rgba(12, 13, 15, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #eef2f4;
+  box-shadow: 0 20px 35px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  overflow: auto;
+  z-index: 4;
+}
+
+.settings-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-panel::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.settings-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+}
+
+.settings-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.settings-group {
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-group:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.settings-group.is-empty {
+  padding-bottom: 6px;
+}
+
+.settings-group-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.settings-subgroup {
+  padding: 8px 8px 10px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-subgroup:last-child {
+  margin-bottom: 0;
+}
+
+.settings-subgroup-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 92px 1fr 56px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.settings-row:last-child {
+  margin-bottom: 0;
+}
+
+.settings-row label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.settings-row input[type="range"] {
+  width: 100%;
+  accent-color: #6bd0ff;
+}
+
+.settings-row output {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  padding: 3px 6px;
+  min-width: 48px;
+  text-align: right;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.settings-row.is-select {
+  grid-template-columns: 92px 1fr;
+}
+
+.settings-row select {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: "IBM Plex Mono", monospace;
+}
+
 @media (max-width: 900px) {
   .hero {
     padding: 20px 20px 0;
@@ -1003,6 +1137,12 @@ output {
   .center-controls {
     bottom: 16px;
   }
+
+  .settings-panel {
+    right: 32px;
+    top: 320px;
+    max-height: calc(100% - 360px);
+  }
 }
 
 @media (max-width: 600px) {
@@ -1038,5 +1178,13 @@ output {
   #viewCube {
     width: 165px;
     height: 165px;
+  }
+
+  .settings-panel {
+    left: 16px;
+    right: 16px;
+    top: 120px;
+    width: auto;
+    max-height: 55vh;
   }
 }

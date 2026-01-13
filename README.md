@@ -30,6 +30,16 @@ Controls:
 - Mouse: Left drag to orbit, Middle button drag to pan, Wheel to zoom
 - Keyboard: WASD to move the view target
 - Viewcube: Click faces to snap view, use the selector to switch camera mode
+- Terrain settings (WIP): If the settings panel is enabled, it exposes live sliders
+  for terrain, layer colors, lighting, bump, and bloom.
+
+## Procedural Terrain (WIP)
+
+The Three.js scene includes a shader-driven terrain plane inspired by
+dgreenheck/threejs-procedural-planets. It blends heightmap + ridged/fractal/simplex
+noise with layered colors, bump, and post-processing bloom. The shader pipeline
+is mid-change, so expect rebuilds and missing wiring. See `AGENTS.md` for current
+integration notes.
 
 ## Scan Path Mode
 
