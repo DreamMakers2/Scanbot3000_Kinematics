@@ -20,12 +20,14 @@
           Live 3D sketch of the linear stage, arm deflection, and rotation
           indicator.
         </div>
+        <div class="legal">© 2026 Project Deviate Software. All rights reserved.</div>
       </header>
       <div class="viewport">
         <canvas id="scene"></canvas>
         <div class="top-controls">
           <button class="top-button" id="driverStatusButton" type="button">Driver Status</button>
           <button class="top-button" id="driverSettingsButton" type="button">Driver Settings</button>
+          <button class="top-button" id="homeZButton" type="button">Home</button>
         </div>
         <div class="api-status" id="apiStatus">
           <span class="api-status-state" id="apiStatusState">OFFLINE</span>
@@ -37,7 +39,7 @@
             <div class="control">
               <label for="scanRadius">Scan radius</label>
               <div class="control-row">
-                <input id="scanRadius" type="range" min="110" max="400" value="320" step="1" />
+                <input id="scanRadius" type="range" min="110" max="450" value="320" step="1" />
                 <output id="scanRadiusVal">320</output>
               </div>
             </div>
@@ -58,9 +60,15 @@
                 <option value="reverse">Reverse</option>
               </select>
             </div>
-            <div class="toggle scan-toggle">
-              <input id="scanDryRun" type="checkbox" />
-              <label for="scanDryRun">Dry run</label>
+            <div class="scan-toggle-row">
+              <div class="toggle scan-toggle">
+                <input id="scanDryRun" type="checkbox" />
+                <label for="scanDryRun">Dry run</label>
+              </div>
+              <div class="toggle scan-toggle">
+                <input id="scanStartCenter" type="checkbox" checked />
+                <label for="scanStartCenter">Start at center</label>
+              </div>
             </div>
             <div class="scan-progress">
               <div class="scan-progress-label">
@@ -77,7 +85,29 @@
             </div>
             <button class="scan-start" id="scanStart" type="button">Start Scan</button>
           </div>
-          <div class="hud is-collapsed">
+          <div class="hud pointcloud-panel" id="pointCloudPanel">
+            <button class="hud-title" id="pointCloudToggle" type="button">
+              <span>Point Cloud</span>
+              <span class="hud-title-icon" aria-hidden="true">v</span>
+            </button>
+            <div class="hud-body">
+              <div class="pointcloud-row">
+                <label for="pointCloudSeconds">Seconds</label>
+                <input id="pointCloudSeconds" type="number" min="1" max="300" step="1" value="30" />
+              </div>
+              <div class="pointcloud-actions">
+                <button class="pointcloud-button is-start" id="pointCloudStart" type="button">Start</button>
+                <button class="pointcloud-button is-stop" id="pointCloudStop" type="button" disabled>Stop</button>
+                <button class="pointcloud-button is-clear" id="pointCloudClear" type="button">Clear</button>
+              </div>
+              <div class="toggle">
+                <input id="pointCloudLaserToggle" type="checkbox" />
+                <label for="pointCloudLaserToggle">Show Laser</label>
+              </div>
+              <div class="pointcloud-status" id="pointCloudStatus" aria-live="polite"></div>
+            </div>
+          </div>
+          <div class="hud is-collapsed" id="controlsPanel">
             <button class="hud-title" id="controlsToggle" type="button">
               <span>Controls</span>
               <span class="hud-title-icon" aria-hidden="true">^</span>
@@ -92,22 +122,22 @@
               <input id="directControlInterval" type="number" min="1" max="60" step="1" value="5" />
             </div>
             <div class="control">
-            <label for="yAxis">Y-axis (linear stage)</label>
+            <label for="zAxis">Z-axis (linear stage)</label>
             <div class="control-row">
-              <input id="yAxis" type="range" min="27" max="305" value="200" step="0.1" />
+              <input id="zAxis" type="range" min="27" max="485" value="200" step="0.1" />
               <div class="value-pair">
-                <output id="yAxisVal">200.0</output>
-                <span class="pos">pos <output id="yPosVal">-4375.0</output></span>
+                <output id="zAxisVal">200.0</output>
+                <span class="pos">pos <output id="zPosVal">-4375.0</output></span>
               </div>
             </div>
           </div>
           <div class="control">
             <label for="xAxis">X-axis (base position)</label>
             <div class="control-row">
-              <input id="xAxis" type="range" min="0" max="333" value="100" step="0.1" />
+              <input id="xAxis" type="range" min="23" max="443" value="23" step="0.1" />
               <div class="value-pair">
-                <output id="xAxisVal">100.0</output>
-                <span class="pos">pos <output id="xPosVal">1165.0</output></span>
+                <output id="xAxisVal">23.0</output>
+                <span class="pos">pos <output id="xPosVal">2100.0</output></span>
               </div>
             </div>
           </div>
@@ -148,8 +178,8 @@
               Base frame
             </div>
             <div class="legend-item">
-              <span class="swatch y-axis"></span>
-              Y-axis
+              <span class="swatch z-axis"></span>
+              Z-axis
             </div>
             <div class="legend-item">
               <span class="swatch axis"></span>
@@ -183,8 +213,8 @@
           <div class="pos-grid">
             <span class="pos-label">x</span>
             <output id="apiPosX">--</output>
-            <span class="pos-label">y</span>
-            <output id="apiPosY">--</output>
+            <span class="pos-label">z</span>
+            <output id="apiPosZ">--</output>
             <span class="pos-label">p</span>
             <output id="apiPosP">--</output>
             <span class="pos-label">r</span>
@@ -199,17 +229,17 @@
           <div class="axis-tuning-title">Axis Limits</div>
           <div class="axis-tuning-grid">
             <div class="axis-tuning-row">
-              <div class="axis-tag">Y</div>
+              <div class="axis-tag">Z</div>
               <div class="axis-tuning-controls">
                 <div class="axis-tuning-control">
-                  <label class="axis-metric" for="axisVelY">Vel</label>
-                  <input id="axisVelY" type="range" min="0" max="8" value="6" step="1" />
-                  <output id="axisVelYVal">500</output>
+                  <label class="axis-metric" for="axisVelZ">Vel</label>
+                  <input id="axisVelZ" type="range" min="0" max="8" value="6" step="1" />
+                  <output id="axisVelZVal">500</output>
                 </div>
                 <div class="axis-tuning-control">
-                  <label class="axis-metric" for="axisAccY">Acc</label>
-                  <input id="axisAccY" type="range" min="0" max="4" value="2" step="1" />
-                  <output id="axisAccYVal">100</output>
+                  <label class="axis-metric" for="axisAccZ">Acc</label>
+                  <input id="axisAccZ" type="range" min="0" max="4" value="2" step="1" />
+                  <output id="axisAccZVal">100</output>
                 </div>
               </div>
             </div>
@@ -274,13 +304,6 @@
     <script src="https://unpkg.com/three@0.157.0/examples/js/lines/LineMaterial.js"></script>
     <script src="https://unpkg.com/three@0.157.0/examples/js/lines/LineSegments2.js"></script>
     <script src="https://unpkg.com/three@0.157.0/examples/js/lines/Line2.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/postprocessing/Pass.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/shaders/CopyShader.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/postprocessing/ShaderPass.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/postprocessing/EffectComposer.js"></script>
-    <script src="https://unpkg.com/three@0.157.0/examples/js/postprocessing/RenderPass.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

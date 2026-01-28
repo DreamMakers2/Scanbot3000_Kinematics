@@ -6,6 +6,7 @@ const viewReadout = document.getElementById("viewReadout");
 const emergencyStopButton = document.getElementById("emergencyStop");
 const driverStatusButton = document.getElementById("driverStatusButton");
 const driverSettingsButton = document.getElementById("driverSettingsButton");
+const homeZButton = document.getElementById("homeZButton");
 const popupLayer = document.getElementById("popupLayer");
 const apiStatus = document.getElementById("apiStatus");
 const apiStatusState = document.getElementById("apiStatusState");
@@ -35,393 +36,6 @@ if (renderer) {
 
 const scene = new THREE.Scene();
 
-const planetSettings = {
-  terrain: {
-    type: 3,
-    amplitude: 1.5,
-    sharpness: 1.975,
-    offset: -0.172,
-    period: 0.7581,
-    persistence: 0.42,
-    lacunarity: 1.888,
-    octaves: 8,
-    centerFalloffRadius: 0,
-    centerFalloffStrength: 1,
-    verticalOffset: 0,
-  },
-  lighting: {
-    ambient: 0.01,
-    diffuse: 1,
-    specular: 2,
-    shininess: 10,
-    direction: new THREE.Vector3(1, 1, 1),
-    color: new THREE.Color(1, 1, 1),
-  },
-  layers: {
-    color1: new THREE.Color(0.014, 0.117, 0.279),
-    color2: new THREE.Color(0.08, 0.527, 0.351),
-    color3: new THREE.Color(0.62, 0.516, 0.372),
-    color4: new THREE.Color(0.149, 0.254, 0.084),
-    color5: new THREE.Color(0.15, 0.15, 0.15),
-    transition2: 0.071,
-    transition3: 0.215,
-    transition4: 0.372,
-    transition5: 1.2,
-    blend12: 0.152,
-    blend23: 0.152,
-    blend34: 0.104,
-    blend45: 0.168,
-    scale: 1.2,
-  },
-  bump: {
-    strength: 1,
-    offset: 0.0001,
-  },
-  bloom: {
-    threshold: 0.71,
-    strength: 0.396,
-    radius: 1.29,
-  },
-};
-
-const planetNoiseFunctions = `
-const float PI = 3.14159265;
-const int MAX_OCTAVES = 8;
-
-vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
-vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
-
-float simplex3(vec3 v) { 
-  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
-  const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
-
-  vec3 i  = floor(v + dot(v, C.yyy) );
-  vec3 x0 =   v - i + dot(i, C.xxx) ;
-
-  vec3 g = step(x0.yzx, x0.xyz);
-  vec3 l = 1.0 - g;
-  vec3 i1 = min( g.xyz, l.zxy );
-  vec3 i2 = max( g.xyz, l.zxy );
-
-  vec3 x1 = x0 - i1 + 1.0 * C.xxx;
-  vec3 x2 = x0 - i2 + 2.0 * C.xxx;
-  vec3 x3 = x0 - 1. + 3.0 * C.xxx;
-
-  i = mod(i, 289.0 ); 
-  vec4 p = permute( permute( permute( 
-            i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-          + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
-          + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
-
-  float n_ = 1.0/7.0;
-  vec3  ns = n_ * D.wyz - D.xzx;
-
-  vec4 j = p - 49.0 * floor(p * ns.z *ns.z);
-
-  vec4 x_ = floor(j * ns.z);
-  vec4 y_ = floor(j - 7.0 * x_ );
-
-  vec4 x = x_ *ns.x + ns.yyyy;
-  vec4 y = y_ *ns.x + ns.yyyy;
-  vec4 h = 1.0 - abs(x) - abs(y);
-
-  vec4 b0 = vec4( x.xy, y.xy );
-  vec4 b1 = vec4( x.zw, y.zw );
-
-  vec4 s0 = floor(b0)*2.0 + 1.0;
-  vec4 s1 = floor(b1)*2.0 + 1.0;
-  vec4 sh = -step(h, vec4(0.0));
-
-  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
-  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
-
-  vec3 p0 = vec3(a0.xy,h.x);
-  vec3 p1 = vec3(a0.zw,h.y);
-  vec3 p2 = vec3(a1.xy,h.z);
-  vec3 p3 = vec3(a1.zw,h.w);
-
-  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
-  p0 *= norm.x;
-  p1 *= norm.y;
-  p2 *= norm.z;
-  p3 *= norm.w;
-
-  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-  m = m * m;
-  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
-                                dot(p2,x2), dot(p3,x3) ) );
-}
-
-float fractal3(      
-  vec3 v,
-  float sharpness,
-  float period,
-  float persistence,
-  float lacunarity,
-  int octaves
-) {
-  float n = 0.0;
-  float a = 1.0;
-  float max_amp = 0.0;
-  float P = period;
-
-  for (int i = 0; i < MAX_OCTAVES; i++) {
-    if (i >= octaves) {
-      break;
-    }
-    n += a * simplex3(v / P);
-    a *= persistence;
-    max_amp += a;
-    P /= lacunarity;
-  }
-
-  return max_amp > 0.0 ? (n / max_amp) : 0.0;
-}
-
-float terrainHeight(
-  int type,
-  vec3 v,
-  float amplitude,
-  float sharpness,
-  float offset,
-  float period,
-  float persistence,
-  float lacunarity,
-  int octaves
-) {
-  float h = 0.0;
-
-  if (type == 1) {
-    h = amplitude * simplex3(v / period);
-  } else if (type == 2) {
-    h = amplitude * fractal3(
-      v,
-      sharpness,
-      period, 
-      persistence, 
-      lacunarity, 
-      octaves);
-    h = amplitude * pow(max(0.0, (h + 1.0) / 2.0), sharpness);
-  } else if (type == 3) {
-    h = fractal3(
-      v,
-      sharpness,
-      period, 
-      persistence, 
-      lacunarity, 
-      octaves);
-    h = amplitude * pow(max(0.0, 1.0 - abs(h)), sharpness);
-  }
-
-  return max(0.0, h + offset);
-}
-`;
-
-const terrainVertexShader = `
-${planetNoiseFunctions}
-attribute vec3 tangent;
-
-uniform int type;
-uniform float amplitude;
-uniform float sharpness;
-uniform float offset;
-uniform float period;
-uniform float persistence;
-uniform float lacunarity;
-uniform int octaves;
-uniform sampler2D heightMap;
-uniform float heightMapStrength;
-uniform float heightScale;
-uniform float centerFalloffRadius;
-uniform float centerFalloffStrength;
-uniform float terrainScale;
-
-varying vec3 fragPosition;
-varying vec3 fragNormal;
-varying vec3 fragTangent;
-varying vec3 fragBitangent;
-varying vec2 fragUv;
-
-void main() {
-  vec3 basePosition = vec3(position.x, 0.0, position.z);
-  vec3 samplePos = basePosition / terrainScale;
-  float h = terrainHeight(
-    type,
-    samplePos,
-    amplitude,
-    sharpness,
-    offset,
-    period,
-    persistence,
-    lacunarity,
-    octaves
-  );
-  float mapHeight = texture2D(heightMap, uv).r;
-  float hMap = pow(mapHeight, 1.55) * heightMapStrength;
-  float heightValue = h + hMap;
-  float centerDistance = length(basePosition.xz);
-  float falloffRadius = max(centerFalloffRadius, 0.0001);
-  float centerFalloff = smoothstep(0.0, falloffRadius, centerDistance);
-  float centerScale = mix(centerFalloffStrength, 1.0, centerFalloff);
-  vec3 displaced = position + normal * (heightValue * centerScale * heightScale);
-
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
-  fragPosition = basePosition;
-  fragNormal = normal;
-  fragTangent = tangent;
-  fragBitangent = cross(normal, tangent);
-  fragUv = uv;
-}
-`;
-
-const terrainFragmentShader = `
-${planetNoiseFunctions}
-uniform int type;
-uniform float amplitude;
-uniform float sharpness;
-uniform float offset;
-uniform float period;
-uniform float persistence;
-uniform float lacunarity;
-uniform int octaves;
-
-uniform vec3 color1;
-uniform vec3 color2;
-uniform vec3 color3;
-uniform vec3 color4;
-uniform vec3 color5;
-uniform float transition2;
-uniform float transition3;
-uniform float transition4;
-uniform float transition5;
-uniform float blend12;
-uniform float blend23;
-uniform float blend34;
-uniform float blend45;
-
-uniform float bumpStrength;
-uniform float bumpOffset;
-
-uniform float ambientIntensity;
-uniform float diffuseIntensity;
-uniform float specularIntensity;
-uniform float shininess;
-uniform vec3 lightDirection;
-uniform vec3 lightColor;
-
-uniform sampler2D heightMap;
-uniform float heightMapStrength;
-uniform float heightScale;
-uniform float centerFalloffRadius;
-uniform float centerFalloffStrength;
-uniform float terrainScale;
-
-varying vec3 fragPosition;
-varying vec3 fragNormal;
-varying vec3 fragTangent;
-varying vec3 fragBitangent;
-varying vec2 fragUv;
-
-void main() {
-  vec3 samplePos = fragPosition / terrainScale;
-  float h = terrainHeight(
-    type,
-    samplePos,
-    amplitude, 
-    sharpness,
-    offset,
-    period, 
-    persistence, 
-    lacunarity, 
-    octaves);
-  float mapHeight = texture2D(heightMap, fragUv).r;
-  float hMap = pow(mapHeight, 1.55) * heightMapStrength;
-  float heightValue = h + hMap;
-  float centerDistance = length(fragPosition.xz);
-  float falloffRadius = max(centerFalloffRadius, 0.0001);
-  float centerFalloff = smoothstep(0.0, falloffRadius, centerDistance);
-  float centerScale = mix(centerFalloffStrength, 1.0, centerFalloff);
-  float heightScaled = heightValue * centerScale * heightScale;
-
-  vec3 dx = bumpOffset * fragTangent;
-  vec3 dy = bumpOffset * fragBitangent;
-  vec3 samplePosDx = vec3(fragPosition.x + dx.x, 0.0, fragPosition.z + dx.z) / terrainScale;
-  vec3 samplePosDy = vec3(fragPosition.x + dy.x, 0.0, fragPosition.z + dy.z) / terrainScale;
-  vec2 uvDx = fragUv + vec2(dx.x, dx.z) / (terrainScale * 2.0);
-  vec2 uvDy = fragUv + vec2(dy.x, dy.z) / (terrainScale * 2.0);
-  float h_dx = terrainHeight(
-    type,
-    samplePosDx,
-    amplitude,
-    sharpness,
-    offset,
-    period,
-    persistence,
-    lacunarity,
-    octaves
-  ) + pow(texture2D(heightMap, uvDx).r, 1.55) * heightMapStrength;
-  float h_dy = terrainHeight(
-    type,
-    samplePosDy,
-    amplitude,
-    sharpness,
-    offset,
-    period,
-    persistence,
-    lacunarity,
-    octaves
-  ) + pow(texture2D(heightMap, uvDy).r, 1.55) * heightMapStrength;
-
-  float centerScaleDx = mix(
-    centerFalloffStrength,
-    1.0,
-    smoothstep(0.0, falloffRadius, length(vec2(fragPosition.x + dx.x, fragPosition.z + dx.z)))
-  );
-  float centerScaleDy = mix(
-    centerFalloffStrength,
-    1.0,
-    smoothstep(0.0, falloffRadius, length(vec2(fragPosition.x + dy.x, fragPosition.z + dy.z)))
-  );
-
-  vec3 pos = vec3(fragPosition.x, heightScaled, fragPosition.z);
-  vec3 pos_dx = vec3(fragPosition.x + dx.x, h_dx * centerScaleDx * heightScale, fragPosition.z + dx.z);
-  vec3 pos_dy = vec3(fragPosition.x + dy.x, h_dy * centerScaleDy * heightScale, fragPosition.z + dy.z);
-  vec3 bumpNormal = normalize(cross(pos_dx - pos, pos_dy - pos));
-  vec3 N = normalize(mix(fragNormal, bumpNormal, bumpStrength));
-  vec3 L = normalize(-lightDirection);
-  vec3 V = normalize(cameraPosition - pos);
-  vec3 R = normalize(reflect(L, N));
-
-  float diffuse = diffuseIntensity * max(0.0, dot(N, -L));
-  float heightValueScaled = heightValue * centerScale;
-  float specularFalloff = clamp((transition3 - heightValueScaled) / transition3, 0.0, 1.0);
-  float specular = max(0.0, specularFalloff * specularIntensity * pow(dot(V, R), shininess));
-  float light = ambientIntensity + diffuse + specular;
-
-  vec3 color12 = mix(
-    color1, 
-    color2, 
-    smoothstep(transition2 - blend12, transition2 + blend12, heightValueScaled));
-
-  vec3 color123 = mix(
-    color12, 
-    color3, 
-    smoothstep(transition3 - blend23, transition3 + blend23, heightValueScaled));
-
-  vec3 color1234 = mix(
-    color123, 
-    color4, 
-    smoothstep(transition4 - blend34, transition4 + blend34, heightValueScaled));
-
-  vec3 finalColor = mix(
-    color1234, 
-    color5, 
-    smoothstep(transition5 - blend45, transition5 + blend45, heightValueScaled));
-  
-  gl_FragColor = vec4(light * finalColor * lightColor, 1.0);
-}
-`;
-
 let axisRenderer = null;
 let axisScene = null;
 let axisCamera = null;
@@ -431,14 +45,6 @@ let viewCubeCamera = null;
 let viewCube = null;
 let viewCubeMesh = null;
 let viewCubeLabels = [];
-let composer = null;
-let renderPass = null;
-let bloomPass = null;
-let terrainMesh = null;
-let heightmapTexture = null;
-let heightmapData = null;
-let heightmapWidth = 0;
-let heightmapHeight = 0;
 const viewCubeRaycaster = new THREE.Raycaster();
 const viewCubePointer = new THREE.Vector2();
 const axisViewDirection = new THREE.Vector3();
@@ -462,6 +68,7 @@ const orthographicCamera = new THREE.OrthographicCamera(
 );
 let camera = perspectiveCamera;
 
+const dragPrecision = 3;
 const orbit = {
   radius: 839.7430400525388,
   theta: THREE.MathUtils.degToRad(134.4),
@@ -481,12 +88,12 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function clampInputValue(value, inputEl) {
+function clampInputValue(value, inputEl, snapStep = true) {
   const min = parseFloat(inputEl.min);
   const max = parseFloat(inputEl.max);
   const step = parseFloat(inputEl.step) || 0;
   let next = clamp(value, min, max);
-  if (step > 0) {
+  if (snapStep && step > 0) {
     next = Math.round(next / step) * step;
   }
   return clamp(next, min, max);
@@ -521,9 +128,6 @@ function setCameraMode(mode) {
     orthographicCamera.updateProjectionMatrix();
   }
   updateCamera();
-  if (renderPass) {
-    renderPass.camera = camera;
-  }
 }
 
 function snapDirection(direction) {
@@ -611,7 +215,7 @@ function updateViewReadout() {
   const pos = camera.position;
   const thetaDeg = THREE.MathUtils.radToDeg(orbit.theta);
   const phiDeg = THREE.MathUtils.radToDeg(orbit.phi);
-  viewReadout.textContent = `View x:${pos.x.toFixed(1)} y:${pos.y.toFixed(1)} z:${pos.z.toFixed(1)} | θ:${thetaDeg.toFixed(1)}° φ:${phiDeg.toFixed(1)}°`;
+  viewReadout.textContent = `View x:${pos.x.toFixed(1)} z:${pos.y.toFixed(1)} y:${pos.z.toFixed(1)} | θ:${thetaDeg.toFixed(1)}° φ:${phiDeg.toFixed(1)}°`;
   syncEmergencyStopSizing();
 }
 
@@ -629,54 +233,13 @@ function panCamera(dx, dy) {
 }
 
 updateCamera();
-
-function initPostProcessing() {
-  if (!renderer || !THREE.EffectComposer || !THREE.RenderPass || !THREE.UnrealBloomPass) {
-    return;
-  }
-  composer = new THREE.EffectComposer(renderer);
-  renderPass = new THREE.RenderPass(scene, camera);
-  composer.addPass(renderPass);
-  bloomPass = new THREE.UnrealBloomPass(
-    new THREE.Vector2(1, 1),
-    planetSettings.bloom.strength,
-    planetSettings.bloom.radius,
-    planetSettings.bloom.threshold
-  );
-  composer.addPass(bloomPass);
-}
-
-initPostProcessing();
-
-function updateLighting() {
-  ambient.intensity = planetSettings.lighting.ambient;
-  sunLight.intensity = planetSettings.lighting.diffuse;
-  fillLight.intensity = planetSettings.lighting.diffuse * 0.18;
-  rimLight.intensity = planetSettings.lighting.diffuse * 0.22;
-  const lightDir = planetSettings.lighting.direction.clone().normalize();
-  sunLight.position.set(lightDir.x, lightDir.y, lightDir.z).multiplyScalar(1000);
-  sunLight.color.copy(planetSettings.lighting.color);
-  sunTarget.position.set(0, 0, 0);
-  sunTarget.updateMatrixWorld();
-  updateTerrainUniforms();
-}
-
-function updateBloom() {
-  if (!bloomPass) {
-    return;
-  }
-  bloomPass.threshold = planetSettings.bloom.threshold;
-  bloomPass.strength = planetSettings.bloom.strength;
-  bloomPass.radius = planetSettings.bloom.radius;
-}
-
-const ambient = new THREE.AmbientLight(0xfff1e1, planetSettings.lighting.ambient);
+const ambient = new THREE.AmbientLight(0xffffff, 0.01);
 scene.add(ambient);
 
-const hemisphere = new THREE.HemisphereLight(0xf7f1e8, 0x2a1b12, 0.2);
+const hemisphere = new THREE.HemisphereLight(0xffffff, 0x1a1d24, 0.2);
 scene.add(hemisphere);
 
-const sunLight = new THREE.DirectionalLight(0xfff1d6, planetSettings.lighting.diffuse);
+const sunLight = new THREE.DirectionalLight(0xfff1d6, 1);
 sunLight.position.set(900, 900, 700);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
@@ -691,7 +254,7 @@ sunLight.shadow.camera.bottom = -900;
 scene.add(sunLight);
 
 const sunTarget = new THREE.Object3D();
-sunTarget.position.set(120, 40, 0);
+sunTarget.position.set(0, 0, 0);
 scene.add(sunTarget);
 sunLight.target = sunTarget;
 
@@ -702,34 +265,44 @@ scene.add(fillLight);
 const rimLight = new THREE.DirectionalLight(0x86c9ff, 0.22);
 rimLight.position.set(-420, 320, -340);
 scene.add(rimLight);
-
-updateLighting();
+sunTarget.updateMatrixWorld();
 
 function createEnvironmentTexture() {
-  const width = 512;
-  const height = 256;
+  const width = 1024;
+  const height = 512;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
 
   const skyGradient = ctx.createLinearGradient(0, 0, 0, height);
-  skyGradient.addColorStop(0, "#fff1dd");
-  skyGradient.addColorStop(0.45, "#f5d7b4");
-  skyGradient.addColorStop(1, "#7ea3b4");
+  skyGradient.addColorStop(0, "#ffffff");
+  skyGradient.addColorStop(0.2, "#f5f7ff");
+  skyGradient.addColorStop(0.28, "#1d2d55");
+  skyGradient.addColorStop(0.38, "#2b47aa");
+  skyGradient.addColorStop(0.5, "#3163e8");
+  skyGradient.addColorStop(0.6, "#2e92f4");
+  skyGradient.addColorStop(0.7, "#2bc1ff");
+  skyGradient.addColorStop(0.78, "#33e0f4");
+  skyGradient.addColorStop(0.86, "#3bffea");
+  skyGradient.addColorStop(0.93, "#9df0b4");
+  skyGradient.addColorStop(1, "#ffe17e");
   ctx.fillStyle = skyGradient;
   ctx.fillRect(0, 0, width, height);
 
   const sun = ctx.createRadialGradient(
-    width * 0.72,
-    height * 0.28,
-    12,
-    width * 0.72,
-    height * 0.28,
-    180
+    width * 0.74,
+    height * 0.22,
+    0,
+    width * 0.74,
+    height * 0.22,
+    height * 0.85
   );
-  sun.addColorStop(0, "rgba(255, 245, 226, 0.85)");
-  sun.addColorStop(1, "rgba(255, 245, 226, 0)");
+  sun.addColorStop(0, "rgba(255, 215, 170, 0.4)");
+  sun.addColorStop(0.4, "rgba(255, 215, 170, 0.22)");
+  sun.addColorStop(0.75, "rgba(255, 215, 170, 0.08)");
+  sun.addColorStop(1, "rgba(255, 215, 170, 0)");
   ctx.fillStyle = sun;
   ctx.fillRect(0, 0, width, height);
 
@@ -740,195 +313,121 @@ function createEnvironmentTexture() {
 }
 
 function createSkyTexture() {
-  const width = 1024;
-  const height = 512;
+  const width = 2048;
+  const height = 1024;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
 
   const skyGradient = ctx.createLinearGradient(0, 0, 0, height);
-  skyGradient.addColorStop(0, "#f8f4e8");
-  skyGradient.addColorStop(0.38, "#f3d8b2");
-  skyGradient.addColorStop(0.7, "#9fc0d4");
-  skyGradient.addColorStop(1, "#6f8ea8");
+  skyGradient.addColorStop(0, "#ffffff");
+  skyGradient.addColorStop(0.2, "#f5f7ff");
+  skyGradient.addColorStop(0.28, "#1b246f");
+  skyGradient.addColorStop(0.32, "#2634b8");
+  skyGradient.addColorStop(0.45, "#3b4aff");
+  skyGradient.addColorStop(0.55, "#3183ff");
+  skyGradient.addColorStop(0.64, "#26bcff");
+  skyGradient.addColorStop(0.72, "#31deff");
+  skyGradient.addColorStop(0.8, "#3bffff");
+  skyGradient.addColorStop(0.86, "#9dfcbd");
+  skyGradient.addColorStop(0.92, "#fff87b");
+  skyGradient.addColorStop(0.97, "#ffc789");
+  skyGradient.addColorStop(1, "#ff9696");
   ctx.fillStyle = skyGradient;
   ctx.fillRect(0, 0, width, height);
 
-  const horizonGlow = ctx.createLinearGradient(0, height * 0.45, 0, height * 0.8);
-  horizonGlow.addColorStop(0, "rgba(255, 239, 214, 0.7)");
-  horizonGlow.addColorStop(1, "rgba(255, 239, 214, 0)");
+  ctx.globalCompositeOperation = "screen";
+
+  const aurora = ctx.createLinearGradient(
+    width * 0.1,
+    height * 0.2,
+    width * 0.9,
+    height * 0.7
+  );
+  aurora.addColorStop(0, "rgba(160, 245, 255, 0)");
+  aurora.addColorStop(0.3, "rgba(160, 245, 255, 0.32)");
+  aurora.addColorStop(0.55, "rgba(220, 140, 255, 0.28)");
+  aurora.addColorStop(0.8, "rgba(220, 140, 255, 0.18)");
+  aurora.addColorStop(1, "rgba(220, 140, 255, 0)");
+  ctx.fillStyle = aurora;
+  ctx.fillRect(0, 0, width, height);
+
+  const horizonGlow = ctx.createLinearGradient(0, height * 0.6, 0, height * 0.95);
+  horizonGlow.addColorStop(0, "rgba(255, 210, 140, 0)");
+  horizonGlow.addColorStop(0.4, "rgba(255, 210, 140, 0.24)");
+  horizonGlow.addColorStop(0.7, "rgba(255, 210, 140, 0.48)");
+  horizonGlow.addColorStop(1, "rgba(255, 210, 140, 0)");
   ctx.fillStyle = horizonGlow;
   ctx.fillRect(0, 0, width, height);
 
   const sun = ctx.createRadialGradient(
-    width * 0.18,
-    height * 0.3,
-    16,
-    width * 0.18,
-    height * 0.3,
-    240
+    width * 0.22,
+    height * 0.72,
+    0,
+    width * 0.22,
+    height * 0.72,
+    height * 0.36
   );
-  sun.addColorStop(0, "rgba(255, 248, 232, 0.9)");
-  sun.addColorStop(1, "rgba(255, 248, 232, 0)");
+  sun.addColorStop(0, "rgba(255, 242, 198, 1)");
+  sun.addColorStop(0.35, "rgba(255, 210, 140, 0.65)");
+  sun.addColorStop(0.7, "rgba(255, 170, 110, 0.32)");
+  sun.addColorStop(1, "rgba(255, 170, 110, 0)");
   ctx.fillStyle = sun;
   ctx.fillRect(0, 0, width, height);
 
-  for (let i = 0; i < 36; i += 1) {
-    const cx = Math.random() * width;
-    const cy = height * 0.18 + Math.random() * height * 0.45;
-    const rx = 90 + Math.random() * 220;
-    const ry = 26 + Math.random() * 70;
-    const alpha = 0.03 + Math.random() * 0.06;
-    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+  const bloom = ctx.createRadialGradient(
+    width * 0.78,
+    height * 0.35,
+    0,
+    width * 0.78,
+    height * 0.35,
+    height * 0.5
+  );
+  bloom.addColorStop(0, "rgba(150, 210, 255, 0.4)");
+  bloom.addColorStop(0.5, "rgba(150, 210, 255, 0.18)");
+  bloom.addColorStop(1, "rgba(150, 210, 255, 0)");
+  ctx.fillStyle = bloom;
+  ctx.fillRect(0, 0, width, height);
+
+  let seed = 142857;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+
+  for (let i = 0; i < 18; i += 1) {
+    const cx = rand() * width;
+    const cy = height * (0.18 + rand() * 0.5);
+    const rx = 180 + rand() * 520;
+    const ry = 30 + rand() * 90;
+    const alpha = 0.025 + rand() * 0.06;
+    const tint = rand();
+    let tintColor = "255, 255, 255";
+    if (tint > 0.72) {
+      tintColor = "120, 210, 255";
+    } else if (tint < 0.28) {
+      tintColor = "255, 170, 210";
+    }
+    ctx.fillStyle = `rgba(${tintColor}, ${alpha})`;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, Math.random() * 0.35, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, rx, ry, rand() * 0.35, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  const haze = ctx.createLinearGradient(0, height * 0.64, 0, height);
-  haze.addColorStop(0, "rgba(255, 243, 224, 0)");
-  haze.addColorStop(1, "rgba(255, 243, 224, 0.12)");
+  const haze = ctx.createLinearGradient(0, height * 0.62, 0, height);
+  haze.addColorStop(0, "rgba(255, 224, 188, 0)");
+  haze.addColorStop(0.55, "rgba(255, 224, 188, 0.12)");
+  haze.addColorStop(1, "rgba(255, 224, 188, 0.26)");
   ctx.fillStyle = haze;
   ctx.fillRect(0, 0, width, height);
+  ctx.globalCompositeOperation = "source-over";
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.mapping = THREE.EquirectangularReflectionMapping;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
-}
-
-function hash2(x, y) {
-  const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
-  return value - Math.floor(value);
-}
-
-function smoothstep(value) {
-  return value * value * (3 - 2 * value);
-}
-
-function smoothstepRange(edge0, edge1, x) {
-  if (edge0 === edge1) {
-    return x < edge0 ? 0 : 1;
-  }
-  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
-  return smoothstep(t);
-}
-
-function valueNoise(x, y) {
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const x1 = x0 + 1;
-  const y1 = y0 + 1;
-  const sx = smoothstep(x - x0);
-  const sy = smoothstep(y - y0);
-
-  const n00 = hash2(x0, y0);
-  const n10 = hash2(x1, y0);
-  const n01 = hash2(x0, y1);
-  const n11 = hash2(x1, y1);
-
-  const nx0 = n00 + (n10 - n00) * sx;
-  const nx1 = n01 + (n11 - n01) * sx;
-  return nx0 + (nx1 - nx0) * sy;
-}
-
-function fractalNoise2(x, y, settings) {
-  let n = 0;
-  let amplitude = 1;
-  let maxAmp = 0;
-  let period = settings.period;
-  for (let i = 0; i < settings.octaves; i += 1) {
-    const noiseValue = valueNoise(x / period, y / period) * 2 - 1;
-    n += amplitude * noiseValue;
-    maxAmp += amplitude;
-    amplitude *= settings.persistence;
-    period /= settings.lacunarity;
-  }
-  if (maxAmp === 0) {
-    return 0;
-  }
-  return n / maxAmp;
-}
-
-function terrainHeightValue(type, x, z, settings) {
-  const baseNoise = valueNoise(x / settings.period, z / settings.period) * 2 - 1;
-  let h = 0;
-  if (type === 1) {
-    h = settings.amplitude * baseNoise;
-  } else if (type === 2) {
-    const fractal = fractalNoise2(x, z, settings);
-    h = settings.amplitude * Math.pow(Math.max(0, (fractal + 1) / 2), settings.sharpness);
-  } else {
-    const fractal = fractalNoise2(x, z, settings);
-    h = settings.amplitude * Math.pow(Math.max(0, 1 - Math.abs(fractal)), settings.sharpness);
-  }
-  return Math.max(0, h + settings.offset);
-}
-
-function createHeightmapTerrain(options) {
-  const { size, segments, baseY } = options;
-  const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
-  geometry.rotateX(-Math.PI / 2);
-  const positions = geometry.attributes.position;
-  const tangents = new Float32Array(positions.count * 3);
-  for (let i = 0; i < positions.count; i += 1) {
-    const offset = i * 3;
-    tangents[offset] = 1;
-    tangents[offset + 1] = 0;
-    tangents[offset + 2] = 0;
-  }
-  geometry.setAttribute("tangent", new THREE.BufferAttribute(tangents, 3));
-
-  const uniforms = {
-    type: { value: planetSettings.terrain.type },
-    amplitude: { value: planetSettings.terrain.amplitude },
-    sharpness: { value: planetSettings.terrain.sharpness },
-    offset: { value: planetSettings.terrain.offset },
-    period: { value: planetSettings.terrain.period },
-    persistence: { value: planetSettings.terrain.persistence },
-    lacunarity: { value: planetSettings.terrain.lacunarity },
-    octaves: { value: planetSettings.terrain.octaves },
-    color1: { value: planetSettings.layers.color1.clone() },
-    color2: { value: planetSettings.layers.color2.clone() },
-    color3: { value: planetSettings.layers.color3.clone() },
-    color4: { value: planetSettings.layers.color4.clone() },
-    color5: { value: planetSettings.layers.color5.clone() },
-    transition2: { value: planetSettings.layers.transition2 },
-    transition3: { value: planetSettings.layers.transition3 },
-    transition4: { value: planetSettings.layers.transition4 },
-    transition5: { value: planetSettings.layers.transition5 },
-    blend12: { value: planetSettings.layers.blend12 },
-    blend23: { value: planetSettings.layers.blend23 },
-    blend34: { value: planetSettings.layers.blend34 },
-    blend45: { value: planetSettings.layers.blend45 },
-    bumpStrength: { value: planetSettings.bump.strength },
-    bumpOffset: { value: planetSettings.bump.offset },
-    ambientIntensity: { value: planetSettings.lighting.ambient },
-    diffuseIntensity: { value: planetSettings.lighting.diffuse },
-    specularIntensity: { value: planetSettings.lighting.specular },
-    shininess: { value: planetSettings.lighting.shininess },
-    lightDirection: { value: planetSettings.lighting.direction.clone().normalize() },
-    lightColor: { value: planetSettings.lighting.color.clone() },
-    heightMap: { value: heightmapTexture },
-    heightMapStrength: { value: 0 },
-    heightScale: { value: terrainMaxHeight },
-    centerFalloffRadius: { value: planetSettings.terrain.centerFalloffRadius },
-    centerFalloffStrength: { value: planetSettings.terrain.centerFalloffStrength },
-    terrainScale: { value: size * 0.5 },
-  };
-
-  const material = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: terrainVertexShader,
-    fragmentShader: terrainFragmentShader,
-    side: THREE.DoubleSide,
-  });
-
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.y = baseY;
-  mesh.receiveShadow = true;
-  return mesh;
 }
 
 function createWoodTexture() {
@@ -1048,10 +547,26 @@ function createFloorSheenTexture() {
 }
 
 const environmentTexture = createEnvironmentTexture();
-scene.background = environmentTexture;
 scene.environment = environmentTexture;
 
+const skyTexture = createSkyTexture();
+skyTexture.mapping = THREE.UVMapping;
+skyTexture.needsUpdate = true;
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(5000, 48, 32),
+  new THREE.MeshBasicMaterial({
+    map: skyTexture,
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: false,
+  })
+);
+skyDome.renderOrder = -10;
+skyDome.frustumCulled = false;
+scene.add(skyDome);
+
 const floorSize = 1440;
+const floorThickness = 12;
 const woodTexture = createWoodTexture();
 if (renderer) {
   woodTexture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
@@ -1064,8 +579,10 @@ const woodMaterial = new THREE.MeshStandardMaterial({
   bumpScale: 3,
   envMapIntensity: 0.45,
 });
-const woodFloor = new THREE.Mesh(new THREE.PlaneGeometry(floorSize, floorSize), woodMaterial);
-woodFloor.rotation.x = -Math.PI / 2;
+const woodFloor = new THREE.Mesh(
+  new THREE.BoxGeometry(floorSize, floorThickness, floorSize),
+  woodMaterial
+);
 woodFloor.receiveShadow = true;
 scene.add(woodFloor);
 
@@ -1098,17 +615,18 @@ scene.add(floorGrid);
 
 
 const baseFrameColor = 0x0d0f12;
-const xAxisColor = 0x2ecc71;
-const yAxisColor = 0xe74c3c;
+const xAxisColor = 0xe74c3c;
+const yAxisColor = 0x2ecc71;
+const zAxisColor = 0x2c7be5;
 const pAxisColor = 0x8e44ad;
-const rAxisColor = 0x2c7be5;
+const rAxisColor = 0x4cb06f;
 const apiMarkerColor = 0x39ff14;
 const labelLineColor = 0x111111;
 const x0 = 0;
 const y0 = 0;
 const baseOffset = -34;
-const x1 = 400;
-const yAxisLength = 400;
+const x1 = 510;
+const zAxisLength = 580;
 const xAxisLength = 600;
 const armLength = 80;
 const axisThickness = 16;
@@ -1117,165 +635,28 @@ const apiDirectionFadeLength = 100;
 const apiDirectionFadeSegments = 10;
 const scanOrigin = new THREE.Vector3(x0, 27, 0);
 const floorOffset = baseOffset - axisThickness / 2;
-woodFloor.position.y = floorOffset;
+woodFloor.position.y = floorOffset - floorThickness / 2;
 floorSheen.position.y = floorOffset + 0.4;
 floorGrid.position.y = floorOffset + 0.8;
-const terrainGroup = new THREE.Group();
-scene.add(terrainGroup);
-
-const terrainSize = 19600;
-const terrainSegments = 420;
-const terrainMaxHeight = 1100;
-const terrainBaseY = floorOffset - 220;
-const terrainCeilingY = floorOffset - 8;
-const terrainHeightmapStrength = 0;
-
-function initHeightmapData(image) {
-  const canvas = document.createElement("canvas");
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(image, 0, 0);
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  heightmapData = img.data;
-  heightmapWidth = canvas.width;
-  heightmapHeight = canvas.height;
-}
-
-function sampleHeightmap(u, v) {
-  if (!heightmapData || !heightmapWidth || !heightmapHeight) {
-    return 0;
-  }
-  const x = Math.floor(clamp(u, 0, 1) * (heightmapWidth - 1));
-  const y = Math.floor(clamp(1 - v, 0, 1) * (heightmapHeight - 1));
-  const idx = (y * heightmapWidth + x) * 4;
-  return (heightmapData[idx] + heightmapData[idx + 1] + heightmapData[idx + 2]) / (3 * 255);
-}
-
-function computeCenterMaxHeight() {
-  const radius = floorSize * 0.55;
-  const samples = 22;
-  let maxHeightValue = 0;
-  for (let i = 0; i <= samples; i += 1) {
-    const x = ((i / samples) * 2 - 1) * radius;
-    for (let j = 0; j <= samples; j += 1) {
-      const z = ((j / samples) * 2 - 1) * radius;
-      if (Math.hypot(x, z) > radius) {
-        continue;
-      }
-      const u = x / terrainSize + 0.5;
-      const v = z / terrainSize + 0.5;
-      const mapHeight = Math.pow(sampleHeightmap(u, v), 1.55) * terrainHeightmapStrength;
-      const noiseHeight = terrainHeightValue(
-        planetSettings.terrain.type,
-        x / (terrainSize * 0.5),
-        z / (terrainSize * 0.5),
-        planetSettings.terrain
-      );
-      const heightValue = Math.max(0, mapHeight + noiseHeight);
-      const centerScale = smoothstepRange(0, planetSettings.terrain.centerFalloffRadius, Math.hypot(x, z));
-      const centerStrength = planetSettings.terrain.centerFalloffStrength;
-      const falloffScale = centerStrength + (1 - centerStrength) * centerScale;
-      const heightScaled = heightValue * falloffScale * terrainMaxHeight;
-      if (heightScaled > maxHeightValue) {
-        maxHeightValue = heightScaled;
-      }
-    }
-  }
-  return maxHeightValue;
-}
-
-function updateTerrainClearance() {
-  if (!terrainMesh) {
-    return;
-  }
-  const baseY = terrainBaseY + planetSettings.terrain.verticalOffset;
-  const centerMaxHeight = computeCenterMaxHeight();
-  const clearanceOffset = Math.min(0, terrainCeilingY - (baseY + centerMaxHeight));
-  terrainMesh.position.y = baseY + clearanceOffset;
-}
-
-function updateTerrainUniforms() {
-  if (!terrainMesh || !terrainMesh.material || !terrainMesh.material.uniforms) {
-    return;
-  }
-  const u = terrainMesh.material.uniforms;
-  if (u.heightMap && heightmapTexture) {
-    u.heightMap.value = heightmapTexture;
-  }
-  u.type.value = planetSettings.terrain.type;
-  u.amplitude.value = planetSettings.terrain.amplitude;
-  u.sharpness.value = planetSettings.terrain.sharpness;
-  u.offset.value = planetSettings.terrain.offset;
-  u.period.value = planetSettings.terrain.period;
-  u.persistence.value = planetSettings.terrain.persistence;
-  u.lacunarity.value = planetSettings.terrain.lacunarity;
-  u.octaves.value = planetSettings.terrain.octaves;
-  u.color1.value.copy(planetSettings.layers.color1);
-  u.color2.value.copy(planetSettings.layers.color2);
-  u.color3.value.copy(planetSettings.layers.color3);
-  u.color4.value.copy(planetSettings.layers.color4);
-  u.color5.value.copy(planetSettings.layers.color5);
-  u.transition2.value = planetSettings.layers.transition2;
-  u.transition3.value = planetSettings.layers.transition3;
-  u.transition4.value = planetSettings.layers.transition4;
-  u.transition5.value = planetSettings.layers.transition5;
-  u.blend12.value = planetSettings.layers.blend12;
-  u.blend23.value = planetSettings.layers.blend23;
-  u.blend34.value = planetSettings.layers.blend34;
-  u.blend45.value = planetSettings.layers.blend45;
-  u.bumpStrength.value = planetSettings.bump.strength;
-  u.bumpOffset.value = planetSettings.bump.offset;
-  u.ambientIntensity.value = planetSettings.lighting.ambient;
-  u.diffuseIntensity.value = planetSettings.lighting.diffuse;
-  u.specularIntensity.value = planetSettings.lighting.specular;
-  u.shininess.value = planetSettings.lighting.shininess;
-  u.lightDirection.value.copy(planetSettings.lighting.direction).normalize();
-  u.lightColor.value.copy(planetSettings.lighting.color);
-  u.heightMapStrength.value = terrainHeightmapStrength;
-  u.heightScale.value = terrainMaxHeight;
-  u.centerFalloffRadius.value = planetSettings.terrain.centerFalloffRadius;
-  u.centerFalloffStrength.value = planetSettings.terrain.centerFalloffStrength;
-}
-
-function rebuildTerrain() {
-  if (!heightmapTexture || !heightmapTexture.image) {
-    return;
-  }
-  if (terrainMesh) {
-    terrainGroup.remove(terrainMesh);
-    terrainMesh.geometry.dispose();
-    terrainMesh.material.dispose();
-  }
-  terrainMesh = createHeightmapTerrain({
-    size: terrainSize,
-    segments: terrainSegments,
-    baseY: terrainBaseY + planetSettings.terrain.verticalOffset,
-  });
-  terrainGroup.add(terrainMesh);
-  updateTerrainClearance();
-  updateLighting();
-}
-
-const posXOrigin = 1665;
+const posXOrigin = 2215;
 const posXScale = 5;
-const posYOrigin = 625;
-const posYScale = 25;
+const posZOrigin = 625;
+const posZScale = 25;
 const rAxisPosPerRev = 3000;
 const rAxisDegreesPerPos = 360 / rAxisPosPerRev;
 const rAxisPosPerDegree = rAxisPosPerRev / 360;
 
-function sceneToPos(xLeft, yDisplay) {
+function sceneToPos(xLeft, zDisplay) {
   return {
     x: posXOrigin - posXScale * xLeft,
-    y: posYOrigin - posYScale * yDisplay,
+    z: posZOrigin - posZScale * zDisplay,
   };
 }
 
-function posToScene(posX, posY) {
+function posToScene(posX, posZ) {
   return {
     x: (posXOrigin - posX) / posXScale,
-    y: (posYOrigin - posY) / posYScale,
+    y: (posZOrigin - posZ) / posZScale,
   };
 }
 
@@ -1388,23 +769,23 @@ function initAxisIndicator() {
   setLine(xLineNeg, 0, 0, 0, -axisLength, 0, 0);
   axisScene.add(xLineNeg.line);
 
+  const zLinePos = makeLine(zAxisColor);
+  setLine(zLinePos, 0, 0, 0, 0, axisLength, 0);
+  axisScene.add(zLinePos.line);
+  const zLineNeg = makeLine(zAxisColor);
+  zLineNeg.line.material.transparent = true;
+  zLineNeg.line.material.opacity = negOpacity;
+  setLine(zLineNeg, 0, 0, 0, 0, -axisLength, 0);
+  axisScene.add(zLineNeg.line);
+
   const yLinePos = makeLine(yAxisColor);
-  setLine(yLinePos, 0, 0, 0, 0, axisLength, 0);
+  setLine(yLinePos, 0, 0, 0, 0, 0, axisLength);
   axisScene.add(yLinePos.line);
   const yLineNeg = makeLine(yAxisColor);
   yLineNeg.line.material.transparent = true;
   yLineNeg.line.material.opacity = negOpacity;
-  setLine(yLineNeg, 0, 0, 0, 0, -axisLength, 0);
+  setLine(yLineNeg, 0, 0, 0, 0, 0, -axisLength);
   axisScene.add(yLineNeg.line);
-
-  const zLinePos = makeLine(rAxisColor);
-  setLine(zLinePos, 0, 0, 0, 0, 0, axisLength);
-  axisScene.add(zLinePos.line);
-  const zLineNeg = makeLine(rAxisColor);
-  zLineNeg.line.material.transparent = true;
-  zLineNeg.line.material.opacity = negOpacity;
-  setLine(zLineNeg, 0, 0, 0, 0, 0, -axisLength);
-  axisScene.add(zLineNeg.line);
 
   function createAxisLetter(letter, color, scale = 0.6) {
     const fontSize = 256;
@@ -1436,18 +817,18 @@ function initAxisIndicator() {
 
   const labelOffset = axisLength + 0.5;
   const labelScale = 0.9;
-  const xLabelPos = createAxisLetter("X+", "#2ecc71", labelScale);
-  const xLabelNeg = createAxisLetter("X-", "rgba(46, 204, 113, 0.55)", labelScale);
-  const yLabelPos = createAxisLetter("Y+", "#e74c3c", labelScale);
-  const yLabelNeg = createAxisLetter("Y-", "rgba(231, 76, 60, 0.55)", labelScale);
+  const xLabelPos = createAxisLetter("X+", "#e74c3c", labelScale);
+  const xLabelNeg = createAxisLetter("X-", "rgba(231, 76, 60, 0.55)", labelScale);
   const zLabelPos = createAxisLetter("Z+", "#2c7be5", labelScale);
   const zLabelNeg = createAxisLetter("Z-", "rgba(44, 123, 229, 0.55)", labelScale);
+  const yLabelPos = createAxisLetter("Y+", "#2ecc71", labelScale);
+  const yLabelNeg = createAxisLetter("Y-", "rgba(46, 204, 113, 0.55)", labelScale);
   xLabelPos.position.set(labelOffset, 0, 0);
   xLabelNeg.position.set(-labelOffset, 0, 0);
-  yLabelPos.position.set(0, labelOffset, 0);
-  yLabelNeg.position.set(0, -labelOffset, 0);
-  zLabelPos.position.set(0, 0, labelOffset);
-  zLabelNeg.position.set(0, 0, -labelOffset);
+  zLabelPos.position.set(0, labelOffset, 0);
+  zLabelNeg.position.set(0, -labelOffset, 0);
+  yLabelPos.position.set(0, 0, labelOffset);
+  yLabelNeg.position.set(0, 0, -labelOffset);
   axisScene.add(xLabelPos, xLabelNeg, yLabelPos, yLabelNeg, zLabelPos, zLabelNeg);
 }
 
@@ -1582,14 +963,14 @@ baseFrameTube.position.set((x0 + x1) / 2, baseOffset, 0);
 setShadow(baseFrameTube, { receive: true });
 scene.add(baseFrameTube);
 
-const yAxisMaterial = makeAnodizedMaterial(yAxisColor, { emissiveIntensity: 0.14 });
+const zAxisMaterial = makeAnodizedMaterial(zAxisColor, { emissiveIntensity: 0.14 });
 const xAxisMaterial = makeAnodizedMaterial(xAxisColor, { emissiveIntensity: 0.14 });
 const pAxisMaterial = makeAnodizedMaterial(pAxisColor, { emissiveIntensity: 0.16 });
 const verticalAxis = new THREE.Mesh(
-  new THREE.BoxGeometry(axisThickness, yAxisLength, axisThickness),
-  yAxisMaterial
+  new THREE.BoxGeometry(axisThickness, zAxisLength, axisThickness),
+  zAxisMaterial
 );
-verticalAxis.position.set(x1, baseOffset + yAxisLength / 2, 0);
+verticalAxis.position.set(x1, baseOffset + zAxisLength / 2, 0);
 setShadow(verticalAxis, { receive: true });
 scene.add(verticalAxis);
 
@@ -1647,13 +1028,13 @@ scene.add(discTopMarker);
 const discHalo = new THREE.Mesh(
   new THREE.RingGeometry(discRadius * 0.6, discRadius * 0.92, 80),
   new THREE.MeshBasicMaterial({
-    color: 0x9ee7ff,
+    color: 0xa6f5c6,
     transparent: true,
     opacity: 0.18,
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
   })
 );
 discHalo.rotation.x = -Math.PI / 2;
@@ -1714,10 +1095,10 @@ let scanPathGlowMaterial = null;
 if (THREE.Line2 && THREE.LineGeometry && THREE.LineMaterial) {
   scanPathGeometry = new THREE.LineGeometry();
   scanPathMaterial = new THREE.LineMaterial({
-    color: 0xffd200,
-    linewidth: 6,
+    color: 0x39ff14,
+    linewidth: 9,
     transparent: true,
-    opacity: 0.95,
+    opacity: 0.98,
   });
   scanPathMaterial.resolution.set(1, 1);
   scanPathLine = new THREE.Line2(scanPathGeometry, scanPathMaterial);
@@ -1726,10 +1107,10 @@ if (THREE.Line2 && THREE.LineGeometry && THREE.LineMaterial) {
   scanPathGroup.add(scanPathLine);
 
   scanPathGlowMaterial = new THREE.LineMaterial({
-    color: 0xfff3b0,
-    linewidth: 14,
+    color: 0x7dff4f,
+    linewidth: 20,
     transparent: true,
-    opacity: 0.25,
+    opacity: 0.35,
     blending: THREE.AdditiveBlending,
   });
   scanPathGlowMaterial.resolution.set(1, 1);
@@ -1742,9 +1123,9 @@ if (THREE.Line2 && THREE.LineGeometry && THREE.LineMaterial) {
   scanPathLine = new THREE.Line(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({
-      color: 0xffd200,
+      color: 0x39ff14,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.95,
     })
   );
   scanPathLine.renderOrder = 4;
@@ -1754,11 +1135,11 @@ if (THREE.Line2 && THREE.LineGeometry && THREE.LineMaterial) {
 const waypointMarkerGroup = new THREE.Group();
 waypointMarkerGroup.renderOrder = 5;
 scene.add(waypointMarkerGroup);
-const waypointMarkerGeometry = new THREE.SphereGeometry(4, 14, 14);
+const waypointMarkerGeometry = new THREE.SphereGeometry(6, 14, 14);
 const waypointMarkerMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0x8fd3ff,
-  emissive: 0x8fd3ff,
-  emissiveIntensity: 0.75,
+  color: 0x39ff14,
+  emissive: 0x39ff14,
+  emissiveIntensity: 0.9,
   roughness: 0.25,
   metalness: 0.15,
   clearcoat: 0.5,
@@ -1793,6 +1174,39 @@ const apiDirectionLine = createFadingLine(
 );
 apiDirectionLine.group.visible = false;
 scene.add(apiDirectionLine.group);
+
+const pointCloudMaxPoints = 20000;
+const pointCloudGeometry = new THREE.SphereGeometry(1.6, 8, 8);
+const pointCloudMaterial = new THREE.MeshStandardMaterial({
+  color: 0xffffff,
+  roughness: 0.2,
+  metalness: 0.08,
+});
+const pointCloudMesh = new THREE.InstancedMesh(
+  pointCloudGeometry,
+  pointCloudMaterial,
+  pointCloudMaxPoints
+);
+pointCloudMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+pointCloudMesh.count = 0;
+pointCloudMesh.frustumCulled = false;
+scene.add(pointCloudMesh);
+const pointCloudDummy = new THREE.Object3D();
+
+const laserGuideGroup = new THREE.Group();
+const laserGuideDot = new THREE.Mesh(
+  new THREE.SphereGeometry(2.2, 12, 12),
+  new THREE.MeshBasicMaterial({ color: 0xff2d2d })
+);
+const laserGuideLineMaterial = new THREE.LineBasicMaterial({ color: 0xff2d2d });
+const laserGuideLineGeometry = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+]);
+const laserGuideLine = new THREE.Line(laserGuideLineGeometry, laserGuideLineMaterial);
+laserGuideGroup.add(laserGuideLine, laserGuideDot);
+laserGuideGroup.visible = false;
+scene.add(laserGuideGroup);
 
 
 const rotationIndicatorLength = discRadius * 0.9;
@@ -1831,10 +1245,12 @@ const armTube = new THREE.Mesh(
 );
 setShadow(armTube, { receive: true });
 scene.add(armTube);
+const pAxisEndTarget = new THREE.Object3D();
+scene.add(pAxisEndTarget);
 
 const draggableObjects = [
-  { object: movablePoint, type: "y" },
-  { object: xAxisLeftPoint, type: "xy" },
+  { object: movablePoint, type: "z" },
+  { object: xAxisLeftPoint, type: "xz" },
   { object: xAxisTube, type: "x" },
   { object: armTube, type: "p" },
   { object: rotationTip, type: "r" },
@@ -1873,6 +1289,7 @@ function createLabel(text, options = {}) {
     color: options.color || "#1f2a2a",
     scale: options.scale || 15,
     backgroundAlpha: options.backgroundAlpha ?? 0.8,
+    extraWidth: options.extraWidth || 0,
     text: "",
   };
   updateLabelText(sprite, text);
@@ -1885,12 +1302,21 @@ function updateLabelText(sprite, text) {
     return;
   }
   data.text = text;
-  const { canvas, font, fontSize, padding, color, backgroundAlpha, texture, scale } = data;
+  const { canvas, font, fontSize, padding, color, backgroundAlpha, texture, scale, extraWidth } = data;
   let { ctx } = data;
   ctx.font = font;
-  const textWidth = Math.ceil(ctx.measureText(text).width);
+  const metrics = ctx.measureText(text);
+  const metricsWidth = metrics.width;
+  const leftExtent = Number.isFinite(metrics.actualBoundingBoxLeft)
+    ? metrics.actualBoundingBoxLeft
+    : metricsWidth / 2;
+  const rightExtent = Number.isFinite(metrics.actualBoundingBoxRight)
+    ? metrics.actualBoundingBoxRight
+    : metricsWidth / 2;
+  const centeredWidth = Math.max(metricsWidth, leftExtent + rightExtent, 2 * Math.max(leftExtent, rightExtent));
+  const textWidth = Math.ceil(centeredWidth);
   const textHeight = fontSize;
-  const width = textWidth + padding * 2;
+  const width = textWidth + padding * 2 + extraWidth + 2;
   const height = textHeight + padding * 2;
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
@@ -1916,10 +1342,10 @@ function updateLabelText(sprite, text) {
 
 const labels = {
   base: createLabel("Base", { color: "#0d0f12" }),
-  yAxis: createLabel("Y-axis", { color: "#e74c3c" }),
-  xAxis: createLabel("X-axis", { color: "#2ecc71" }),
+  zAxis: createLabel("Z-axis", { color: "#2c7be5" }),
+  xAxis: createLabel("X-axis", { color: "#e74c3c" }),
   pAxis: createLabel("P-axis", { color: "#8e44ad" }),
-  rAxis: createLabel("R-axis", { color: "#2c7be5" }),
+  rAxis: createLabel("R-axis", { color: "#4cb06f" }),
 };
 
 Object.values(labels).forEach((label) => axisLabelGroup.add(label));
@@ -1927,7 +1353,7 @@ Object.values(labels).forEach((label) => axisLabelGroup.add(label));
 
 const labelLines = {
   base: makeLine(labelLineColor),
-  yAxis: makeLine(labelLineColor),
+  zAxis: makeLine(labelLineColor),
   xAxis: makeLine(labelLineColor),
   pAxis: makeLine(labelLineColor),
   rAxis: makeLine(labelLineColor),
@@ -1939,15 +1365,16 @@ Object.values(labelLines).forEach((line) => {
 });
 
 const coordLabels = [];
-
+const coordLabelExtraWidth = 12;
 function formatCoord(position) {
-  return `X:${position.x.toFixed(1)} Y:${position.y.toFixed(1)}`;
+  return `X:${position.x.toFixed(1)} Z:${position.y.toFixed(1)}`;
 }
 
 function addCoordLabel(name, target, offset, options = {}) {
   const label = createLabel(`${name} ${formatCoord(target.position)}`, {
     color: options.color || "#0d0f12",
     scale: options.scale || 12,
+    extraWidth: options.extraWidth ?? coordLabelExtraWidth,
   });
   label.position.copy(target.position).add(offset);
   coordLabelGroup.add(label);
@@ -1977,12 +1404,48 @@ function updateCoordLabels() {
 
 addCoordLabel("Stage", stageMarker, new THREE.Vector3(80, 40, -80));
 addCoordLabel("Slider", movablePoint, new THREE.Vector3(80, 40, 60));
-addCoordLabel("Joint", xAxisLeftPoint, new THREE.Vector3(-80, 40, 60));
+addCoordLabel("Joint", xAxisLeftPoint, new THREE.Vector3(80, 40, 60));
+addCoordLabel("P-axis End", pAxisEndTarget, new THREE.Vector3(60, 45, 60));
 addCoordLabel("Disc", discTopMarker, new THREE.Vector3(60, 40, 0));
 addCoordLabel("Scan Origin", scanOriginMarker, new THREE.Vector3(60, 40, 60));
+const scanDistanceStep = 0.1;
+function formatScanDistance(distance) {
+  const snapped = Math.round(distance / scanDistanceStep) * scanDistanceStep;
+  const text = snapped.toFixed(1);
+  return text.endsWith(".0") ? text.slice(0, -2) : text;
+}
+
+const scanDistanceLabel = createLabel(
+  `Scan distance ${formatScanDistance(0)}`,
+  {
+    color: "#1f2a2a",
+    scale: 12,
+    extraWidth: coordLabelExtraWidth,
+  }
+);
+coordLabelGroup.add(scanDistanceLabel);
+const scanDistanceLine = makeLine(labelLineColor);
+scanDistanceLine.line.material.transparent = true;
+scanDistanceLine.line.material.opacity = 0.5;
+coordLineGroup.add(scanDistanceLine.line);
+const scanDistanceMidpoint = new THREE.Vector3();
+
+function updateScanDistanceLabel() {
+  const start = pAxisEndTarget.position;
+  const end = scanOriginMarker.position;
+  scanDistanceMidpoint.set(
+    (start.x + end.x) / 2,
+    (start.y + end.y) / 2,
+    (start.z + end.z) / 2
+  );
+  scanDistanceLabel.position.copy(scanDistanceMidpoint);
+  setLine(scanDistanceLine, start.x, start.y, start.z, end.x, end.y, end.z);
+  const distance = start.distanceTo(end);
+  updateLabelText(scanDistanceLabel, `Scan distance ${formatScanDistance(distance)}`);
+}
 
 labels.base.position.set(x1 - 60, baseOffset + 35, -40);
-labels.yAxis.position.set(x1 + 40, baseOffset + yAxisLength - 20, 40);
+labels.zAxis.position.set(x1 + 40, baseOffset + zAxisLength - 20, 40);
 labels.rAxis.position.set(discCenter.x + discRadius * 0.7, discTopY + 35, 40);
 setLine(
   labelLines.base,
@@ -1994,12 +1457,12 @@ setLine(
   0
 );
 setLine(
-  labelLines.yAxis,
-  labels.yAxis.position.x,
-  labels.yAxis.position.y,
-  labels.yAxis.position.z,
+  labelLines.zAxis,
+  labels.zAxis.position.x,
+  labels.zAxis.position.y,
+  labels.zAxis.position.z,
   x1,
-  baseOffset + yAxisLength,
+  baseOffset + zAxisLength,
   0
 );
 setLine(
@@ -2012,17 +1475,17 @@ setLine(
   0
 );
 
-function updateLabelPositions(xLeft, xRight, yVal, armEndX, armEndY) {
+function updateLabelPositions(xLeft, xRight, zVal, armEndX, armEndZ) {
   const xLabelAnchor = xLeft + (xAxisLength * 2) / 3;
-  labels.xAxis.position.set(xLabelAnchor + 20, yVal + 35, 40);
-  labels.pAxis.position.set((xLeft + armEndX) / 2 + 20, (yVal + armEndY) / 2 + 35, 40);
+  labels.xAxis.position.set(xLabelAnchor + 20, zVal + 35, 40);
+  labels.pAxis.position.set((xLeft + armEndX) / 2 + 20, (zVal + armEndZ) / 2 + 35, 40);
   setLine(
     labelLines.xAxis,
     labels.xAxis.position.x,
     labels.xAxis.position.y,
     labels.xAxis.position.z,
     xLabelAnchor,
-    yVal,
+    zVal,
     0
   );
   setLine(
@@ -2031,12 +1494,12 @@ function updateLabelPositions(xLeft, xRight, yVal, armEndX, armEndY) {
     labels.pAxis.position.y,
     labels.pAxis.position.z,
     (xLeft + armEndX) / 2,
-    (yVal + armEndY) / 2,
+    (zVal + armEndZ) / 2,
     0
   );
 }
 
-const yAxisInput = document.getElementById("yAxis");
+const zAxisInput = document.getElementById("zAxis");
 const xAxisInput = document.getElementById("xAxis");
 const pAxisInput = document.getElementById("pAxis");
 const rAxisInput = document.getElementById("rAxis");
@@ -2049,23 +1512,33 @@ const scanWaypointsInput = document.getElementById("scanWaypoints");
 const scanRepeatsInput = document.getElementById("scanRepeats");
 const scanStartDirectionInput = document.getElementById("scanStartDirection");
 const scanDryRunInput = document.getElementById("scanDryRun");
+const scanStartCenterInput = document.getElementById("scanStartCenter");
 const scanStartButton = document.getElementById("scanStart");
 const scanProgressText = document.getElementById("scanProgressText");
 const scanProgressFill = document.getElementById("scanProgressFill");
 const scanEstimateText = document.getElementById("scanEstimate");
-const controlsPanel = document.querySelector(".hud");
+const pointCloudPanel = document.getElementById("pointCloudPanel");
+const pointCloudToggle = document.getElementById("pointCloudToggle");
+const pointCloudToggleIcon = document.querySelector("#pointCloudToggle .hud-title-icon");
+const pointCloudSecondsInput = document.getElementById("pointCloudSeconds");
+const pointCloudStartButton = document.getElementById("pointCloudStart");
+const pointCloudStopButton = document.getElementById("pointCloudStop");
+const pointCloudClearButton = document.getElementById("pointCloudClear");
+const pointCloudLaserToggle = document.getElementById("pointCloudLaserToggle");
+const pointCloudStatus = document.getElementById("pointCloudStatus");
+const controlsPanel = document.getElementById("controlsPanel");
 const controlsToggle = document.getElementById("controlsToggle");
 const controlsToggleIcon = document.querySelector("#controlsToggle .hud-title-icon");
 
-const yAxisVal = document.getElementById("yAxisVal");
+const zAxisVal = document.getElementById("zAxisVal");
 const xAxisVal = document.getElementById("xAxisVal");
 const pAxisVal = document.getElementById("pAxisVal");
 const rAxisVal = document.getElementById("rAxisVal");
-const yPosVal = document.getElementById("yPosVal");
+const zPosVal = document.getElementById("zPosVal");
 const xPosVal = document.getElementById("xPosVal");
 const rPosVal = document.getElementById("rPosVal");
 const apiPosX = document.getElementById("apiPosX");
-const apiPosY = document.getElementById("apiPosY");
+const apiPosZ = document.getElementById("apiPosZ");
 const apiPosP = document.getElementById("apiPosP");
 const apiPosR = document.getElementById("apiPosR");
 const apiPosStatus = document.getElementById("apiPosStatus");
@@ -2075,11 +1548,11 @@ const directControlIntervalInput = document.getElementById("directControlInterva
 const scanRadiusVal = document.getElementById("scanRadiusVal");
 const axisTuningControls = [
   {
-    axis: "y",
-    velInput: document.getElementById("axisVelY"),
-    velOutput: document.getElementById("axisVelYVal"),
-    accInput: document.getElementById("axisAccY"),
-    accOutput: document.getElementById("axisAccYVal"),
+    axis: "z",
+    velInput: document.getElementById("axisVelZ"),
+    velOutput: document.getElementById("axisVelZVal"),
+    accInput: document.getElementById("axisAccZ"),
+    accOutput: document.getElementById("axisAccZVal"),
   },
   {
     axis: "x",
@@ -2104,317 +1577,6 @@ const axisTuningControls = [
   },
 ];
 const axisApplyButton = document.getElementById("axisApply");
-const settingsPanel = document.getElementById("settingsPanel");
-
-function setSettingValue(id, value) {
-  const input = document.getElementById(id);
-  if (!input) {
-    return;
-  }
-  const textValue = Number.isFinite(Number(value)) ? String(value) : `${value}`;
-  input.value = textValue;
-  const output = input.closest(".settings-row")?.querySelector("output");
-  if (output) {
-    output.textContent = textValue;
-  }
-}
-
-if (settingsPanel) {
-  const settingsDefaults = [
-    ["terrainAmplitude", planetSettings.terrain.amplitude],
-    ["terrainSharpness", planetSettings.terrain.sharpness],
-    ["terrainOffset", planetSettings.terrain.offset],
-    ["terrainPeriod", planetSettings.terrain.period],
-    ["terrainPersistence", planetSettings.terrain.persistence],
-    ["terrainLacunarity", planetSettings.terrain.lacunarity],
-    ["terrainOctaves", planetSettings.terrain.octaves],
-    ["terrainVerticalOffset", planetSettings.terrain.verticalOffset],
-    ["centerFalloffRadius", planetSettings.terrain.centerFalloffRadius],
-    ["centerFalloffStrength", planetSettings.terrain.centerFalloffStrength],
-    ["transition2", planetSettings.layers.transition2],
-    ["transition3", planetSettings.layers.transition3],
-    ["transition4", planetSettings.layers.transition4],
-    ["transition5", planetSettings.layers.transition5],
-    ["blend12", planetSettings.layers.blend12],
-    ["blend23", planetSettings.layers.blend23],
-    ["blend34", planetSettings.layers.blend34],
-    ["blend45", planetSettings.layers.blend45],
-    ["lightingAmbient", planetSettings.lighting.ambient],
-    ["lightingDiffuse", planetSettings.lighting.diffuse],
-    ["lightingSpecular", planetSettings.lighting.specular],
-    ["lightingShininess", planetSettings.lighting.shininess],
-    ["lightDirX", planetSettings.lighting.direction.x],
-    ["lightDirY", planetSettings.lighting.direction.y],
-    ["lightDirZ", planetSettings.lighting.direction.z],
-    ["bumpStrength", planetSettings.bump.strength],
-    ["bumpOffset", planetSettings.bump.offset],
-    ["bloomThreshold", planetSettings.bloom.threshold],
-    ["bloomStrength", planetSettings.bloom.strength],
-    ["bloomRadius", planetSettings.bloom.radius],
-  ];
-
-  const layer1 = planetSettings.layers.color1;
-  const layer2 = planetSettings.layers.color2;
-  const layer3 = planetSettings.layers.color3;
-  const layer4 = planetSettings.layers.color4;
-  const layer5 = planetSettings.layers.color5;
-  settingsDefaults.push(
-    ["layer1Red", layer1.r],
-    ["layer1Green", layer1.g],
-    ["layer1Blue", layer1.b],
-    ["layer2Red", layer2.r],
-    ["layer2Green", layer2.g],
-    ["layer2Blue", layer2.b],
-    ["layer3Red", layer3.r],
-    ["layer3Green", layer3.g],
-    ["layer3Blue", layer3.b],
-    ["layer4Red", layer4.r],
-    ["layer4Green", layer4.g],
-    ["layer4Blue", layer4.b],
-    ["layer5Red", layer5.r],
-    ["layer5Green", layer5.g],
-    ["layer5Blue", layer5.b]
-  );
-
-  const lightColor = planetSettings.lighting.color;
-  settingsDefaults.push(
-    ["lightColorR", lightColor.r],
-    ["lightColorG", lightColor.g],
-    ["lightColorB", lightColor.b]
-  );
-
-  settingsDefaults.forEach(([id, value]) => setSettingValue(id, value));
-
-  const terrainTypeSelect = document.getElementById("terrainType");
-  if (terrainTypeSelect) {
-    terrainTypeSelect.value = String(planetSettings.terrain.type);
-    terrainTypeSelect.addEventListener("change", () => {
-      planetSettings.terrain.type = Number(terrainTypeSelect.value) || 1;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    });
-  }
-
-  const settingsHandlers = {
-    terrainAmplitude: (value) => {
-      planetSettings.terrain.amplitude = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainSharpness: (value) => {
-      planetSettings.terrain.sharpness = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainOffset: (value) => {
-      planetSettings.terrain.offset = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainPeriod: (value) => {
-      planetSettings.terrain.period = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainPersistence: (value) => {
-      planetSettings.terrain.persistence = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainLacunarity: (value) => {
-      planetSettings.terrain.lacunarity = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainOctaves: (value) => {
-      planetSettings.terrain.octaves = clamp(Math.round(value), 1, 8);
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    terrainVerticalOffset: (value) => {
-      planetSettings.terrain.verticalOffset = value;
-      updateTerrainClearance();
-    },
-    centerFalloffRadius: (value) => {
-      planetSettings.terrain.centerFalloffRadius = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    centerFalloffStrength: (value) => {
-      planetSettings.terrain.centerFalloffStrength = value;
-      updateTerrainUniforms();
-      updateTerrainClearance();
-    },
-    transition2: (value) => {
-      planetSettings.layers.transition2 = value;
-      updateTerrainUniforms();
-    },
-    transition3: (value) => {
-      planetSettings.layers.transition3 = value;
-      updateTerrainUniforms();
-    },
-    transition4: (value) => {
-      planetSettings.layers.transition4 = value;
-      updateTerrainUniforms();
-    },
-    transition5: (value) => {
-      planetSettings.layers.transition5 = value;
-      updateTerrainUniforms();
-    },
-    blend12: (value) => {
-      planetSettings.layers.blend12 = value;
-      updateTerrainUniforms();
-    },
-    blend23: (value) => {
-      planetSettings.layers.blend23 = value;
-      updateTerrainUniforms();
-    },
-    blend34: (value) => {
-      planetSettings.layers.blend34 = value;
-      updateTerrainUniforms();
-    },
-    blend45: (value) => {
-      planetSettings.layers.blend45 = value;
-      updateTerrainUniforms();
-    },
-    layer1Red: (value) => {
-      planetSettings.layers.color1.r = value;
-      updateTerrainUniforms();
-    },
-    layer1Green: (value) => {
-      planetSettings.layers.color1.g = value;
-      updateTerrainUniforms();
-    },
-    layer1Blue: (value) => {
-      planetSettings.layers.color1.b = value;
-      updateTerrainUniforms();
-    },
-    layer2Red: (value) => {
-      planetSettings.layers.color2.r = value;
-      updateTerrainUniforms();
-    },
-    layer2Green: (value) => {
-      planetSettings.layers.color2.g = value;
-      updateTerrainUniforms();
-    },
-    layer2Blue: (value) => {
-      planetSettings.layers.color2.b = value;
-      updateTerrainUniforms();
-    },
-    layer3Red: (value) => {
-      planetSettings.layers.color3.r = value;
-      updateTerrainUniforms();
-    },
-    layer3Green: (value) => {
-      planetSettings.layers.color3.g = value;
-      updateTerrainUniforms();
-    },
-    layer3Blue: (value) => {
-      planetSettings.layers.color3.b = value;
-      updateTerrainUniforms();
-    },
-    layer4Red: (value) => {
-      planetSettings.layers.color4.r = value;
-      updateTerrainUniforms();
-    },
-    layer4Green: (value) => {
-      planetSettings.layers.color4.g = value;
-      updateTerrainUniforms();
-    },
-    layer4Blue: (value) => {
-      planetSettings.layers.color4.b = value;
-      updateTerrainUniforms();
-    },
-    layer5Red: (value) => {
-      planetSettings.layers.color5.r = value;
-      updateTerrainUniforms();
-    },
-    layer5Green: (value) => {
-      planetSettings.layers.color5.g = value;
-      updateTerrainUniforms();
-    },
-    layer5Blue: (value) => {
-      planetSettings.layers.color5.b = value;
-      updateTerrainUniforms();
-    },
-    lightingAmbient: (value) => {
-      planetSettings.lighting.ambient = value;
-      updateLighting();
-    },
-    lightingDiffuse: (value) => {
-      planetSettings.lighting.diffuse = value;
-      updateLighting();
-    },
-    lightingSpecular: (value) => {
-      planetSettings.lighting.specular = value;
-      updateLighting();
-    },
-    lightingShininess: (value) => {
-      planetSettings.lighting.shininess = Math.max(0, Math.round(value));
-      updateLighting();
-    },
-    lightDirX: (value) => {
-      planetSettings.lighting.direction.x = value;
-      updateLighting();
-    },
-    lightDirY: (value) => {
-      planetSettings.lighting.direction.y = value;
-      updateLighting();
-    },
-    lightDirZ: (value) => {
-      planetSettings.lighting.direction.z = value;
-      updateLighting();
-    },
-    lightColorR: (value) => {
-      planetSettings.lighting.color.r = value;
-      updateLighting();
-    },
-    lightColorG: (value) => {
-      planetSettings.lighting.color.g = value;
-      updateLighting();
-    },
-    lightColorB: (value) => {
-      planetSettings.lighting.color.b = value;
-      updateLighting();
-    },
-    bumpStrength: (value) => {
-      planetSettings.bump.strength = value;
-      updateTerrainUniforms();
-    },
-    bumpOffset: (value) => {
-      planetSettings.bump.offset = value;
-      updateTerrainUniforms();
-    },
-    bloomThreshold: (value) => {
-      planetSettings.bloom.threshold = value;
-      updateBloom();
-    },
-    bloomStrength: (value) => {
-      planetSettings.bloom.strength = value;
-      updateBloom();
-    },
-    bloomRadius: (value) => {
-      planetSettings.bloom.radius = value;
-      updateBloom();
-    },
-  };
-
-  settingsPanel.querySelectorAll('input[type="range"]').forEach((input) => {
-    const output = input.closest(".settings-row")?.querySelector("output");
-    if (output) {
-      output.textContent = input.value;
-    }
-    input.addEventListener("input", () => {
-      if (output) {
-        output.textContent = input.value;
-      }
-      const handler = settingsHandlers[input.id];
-      if (handler) {
-        handler(Number(input.value));
-      }
-    });
-  });
-}
 
 if (labelsToggleInput) {
   axisLabelGroup.visible = labelsToggleInput.checked;
@@ -2445,9 +1607,9 @@ function angleToDeflection(angle) {
   return clamp(deflection, -90, 90);
 }
 
-function angleToOrigin(xLeft, yVal) {
+function angleToOrigin(xLeft, zVal) {
   return THREE.MathUtils.radToDeg(
-    Math.atan2(scanOrigin.y - yVal, scanOrigin.x - xLeft)
+    Math.atan2(scanOrigin.y - zVal, scanOrigin.x - xLeft)
   );
 }
 
@@ -2480,8 +1642,8 @@ function updateApiDirectionLine(fallbackAngleRad) {
   updateFadingLine(apiDirectionLine, apiMarker.position, angleRad);
 }
 
-function updateOutputs(yDisplay, xLeft, pVal, rVal) {
-  yAxisVal.textContent = yDisplay.toFixed(1);
+function updateOutputs(zDisplay, xLeft, pVal, rVal) {
+  zAxisVal.textContent = zDisplay.toFixed(1);
   xAxisVal.textContent = xLeft.toFixed(1);
   const pDisplay = (-pVal / 90) * 255;
   pAxisVal.textContent = pDisplay.toFixed(0);
@@ -2490,10 +1652,10 @@ function updateOutputs(yDisplay, xLeft, pVal, rVal) {
   if (rPosVal) {
     rPosVal.textContent = rVal.toFixed(0);
   }
-  if (yPosVal || xPosVal) {
-    const posValues = sceneToPos(xLeft, yDisplay);
-    if (yPosVal) {
-      yPosVal.textContent = posValues.y.toFixed(1);
+  if (zPosVal || xPosVal) {
+    const posValues = sceneToPos(xLeft, zDisplay);
+    if (zPosVal) {
+      zPosVal.textContent = posValues.z.toFixed(1);
     }
     if (xPosVal) {
       xPosVal.textContent = posValues.x.toFixed(1);
@@ -2502,13 +1664,13 @@ function updateOutputs(yDisplay, xLeft, pVal, rVal) {
 }
 
 function updateScene() {
-  const yVal = parseFloat(yAxisInput.value);
+  const zVal = parseFloat(zAxisInput.value);
   const xLeft = parseFloat(xAxisInput.value);
-  const yActual = yVal;
+  const zActual = zVal;
   let pVal = parseFloat(pAxisInput.value);
 
   if (lockOriginInput.checked) {
-    const desiredAngle = angleToOrigin(xLeft, yActual);
+    const desiredAngle = angleToOrigin(xLeft, zActual);
     const desiredDeflection = angleToDeflection(desiredAngle);
     pVal = desiredDeflection;
     pAxisInput.value = desiredDeflection.toFixed(1);
@@ -2518,18 +1680,20 @@ function updateScene() {
   const angleRad = THREE.MathUtils.degToRad(angleDeg);
   const rVal = parseFloat(rAxisInput.value);
 
-  updateOutputs(yActual, xLeft, pVal, rVal);
+  updateOutputs(zActual, xLeft, pVal, rVal);
 
   const xRight = xLeft + xAxisLength;
   const armEndX = xLeft + armLength * Math.cos(angleRad);
-  const armEndY = yActual + armLength * Math.sin(angleRad);
+  const armEndZ = zActual + armLength * Math.sin(angleRad);
 
-  movablePoint.position.set(x1, yActual, 0);
-  xAxisLeftPoint.position.set(xLeft, yActual, 0);
-  xAxisTube.position.set((xLeft + xRight) / 2, yActual, 0);
-  armTube.position.set((xLeft + armEndX) / 2, (yActual + armEndY) / 2, 0);
+  movablePoint.position.set(x1, zActual, 0);
+  xAxisLeftPoint.position.set(xLeft, zActual, 0);
+  xAxisTube.position.set((xLeft + xRight) / 2, zActual, 0);
+  armTube.position.set((xLeft + armEndX) / 2, (zActual + armEndZ) / 2, 0);
   armTube.rotation.set(0, 0, angleRad);
-  updateLabelPositions(xLeft, xRight, yActual, armEndX, armEndY);
+  pAxisEndTarget.position.set(armEndX, armEndZ, 0);
+  updateLabelPositions(xLeft, xRight, zActual, armEndX, armEndZ);
+  updateScanDistanceLabel();
 
   const rotationDeg = rPosToDegrees(rVal);
   const rotationRad = THREE.MathUtils.degToRad(rotationDeg);
@@ -2539,6 +1703,7 @@ function updateScene() {
   rotationTip.position.set(arrowEndX, discTopY, arrowEndZ);
   updateCoordLabels();
   updateApiDirectionLine(angleRad);
+  updateLaserGuide();
 }
 
 const apiBaseUrl = "http://192.168.178.222:8001/api";
@@ -2550,6 +1715,12 @@ const driverStatusUrl = `${apiBaseUrl}/driverstatus`;
 const driverSettingsUrl = `${apiBaseUrl}/driversettings`;
 const coordStatusUrl = `${apiBaseUrl}/coordstatus`;
 const stopUrl = `${apiBaseUrl}/stop`;
+const homeUrl = `${apiBaseUrl}/home`;
+const measureUrl = `${apiBaseUrl}/measure`;
+const apiRootUrl = apiBaseUrl.replace(/\/api\/?$/, "");
+const wsBaseUrl = apiRootUrl.replace(/^http/, "ws");
+const measureAxis = "r";
+const measureSocketUrl = `${wsBaseUrl}/ws/axis/${measureAxis}`;
 const posPollIntervalMs = 50;
 const apiStatusPollIntervalMs = 1000;
 let posPollTimer = null;
@@ -2561,6 +1732,19 @@ let apiStatusTimer = null;
 let apiStatusInFlight = false;
 let apiOnlineSince = null;
 let apiOfflineSince = null;
+const measurementOffset = new THREE.Vector3(-2, -25.5, 0);
+const measurementLaserLength = 200;
+const pointCloudState = {
+  active: false,
+  starting: false,
+  socket: null,
+  stopTimer: null,
+  closing: false,
+};
+const measurementBase = new THREE.Vector3();
+const measurementOrigin = new THREE.Vector3();
+const measurementDirection = new THREE.Vector3();
+const measurementEnd = new THREE.Vector3();
 
 function readNumeric(value) {
   if (typeof value === "number") {
@@ -2692,7 +1876,7 @@ const velocitySteps = [5, 10, 25, 50, 100, 250, 500, 750, 1000];
 const accelSteps = [25, 50, 100, 250, 500];
 const axisTuningStorageKey = "scanbot.axisTuning.v1";
 const axisTuningDefaults = {
-  y: { velocity: 500, accel: 100 },
+  z: { velocity: 500, accel: 100 },
   x: { velocity: 500, accel: 100 },
   p: { velocity: 500, accel: 100 },
   r: { velocity: 500, accel: 100 },
@@ -2753,6 +1937,7 @@ function getStepValueFromInput(steps, inputEl) {
 
 function loadAxisTuning() {
   let parsed = null;
+  let shouldPersist = false;
   try {
     const stored = localStorage.getItem(axisTuningStorageKey);
     if (stored) {
@@ -2760,6 +1945,12 @@ function loadAxisTuning() {
     }
   } catch (err) {
     parsed = null;
+  }
+  if (parsed && typeof parsed === "object") {
+    if (parsed.y && !parsed.z) {
+      parsed.z = parsed.y;
+      shouldPersist = true;
+    }
   }
   const next = {};
   Object.keys(axisTuningDefaults).forEach((axis) => {
@@ -2772,6 +1963,9 @@ function loadAxisTuning() {
       accel: Number.isFinite(accel) ? accel : axisDefaults.accel,
     };
   });
+  if (shouldPersist) {
+    saveAxisTuning(next);
+  }
   return next;
 }
 
@@ -2890,9 +2084,17 @@ function isDirectControlAvailable(status, homed) {
   return normalizedStatus === "ok" && Number(homed) === 1;
 }
 
+function updateHomeButtonState(homed) {
+  if (!homeZButton) {
+    return;
+  }
+  homeZButton.classList.toggle("is-homed", Number(homed) === 1);
+}
+
 function updateDirectControlAvailability(status, homed) {
   lastApiStatus = status;
   lastApiHomed = homed;
+  updateHomeButtonState(homed);
   if (!directControlToggle) {
     return;
   }
@@ -2927,29 +2129,29 @@ function getDirectControlIntervalMs() {
 }
 
 function getMoveAbsPayload() {
-  if (!yAxisInput || !xAxisInput || !pAxisInput || !rAxisInput) {
+  if (!zAxisInput || !xAxisInput || !pAxisInput || !rAxisInput) {
     return null;
   }
-  const yVal = Number.parseFloat(yAxisInput.value);
+  const zVal = Number.parseFloat(zAxisInput.value);
   const xLeft = Number.parseFloat(xAxisInput.value);
   const pVal = Number.parseFloat(pAxisInput.value);
   const rVal = Number.parseFloat(rAxisInput.value);
   if (
-    !Number.isFinite(yVal) ||
+    !Number.isFinite(zVal) ||
     !Number.isFinite(xLeft) ||
     !Number.isFinite(pVal) ||
     !Number.isFinite(rVal)
   ) {
     return null;
   }
-  const posValues = sceneToPos(xLeft, yVal);
-  if (!Number.isFinite(posValues.x) || !Number.isFinite(posValues.y)) {
+  const posValues = sceneToPos(xLeft, zVal);
+  if (!Number.isFinite(posValues.x) || !Number.isFinite(posValues.z)) {
     return null;
   }
   const pDisplay = (-pVal / 90) * 255;
   return {
     x: Math.round(posValues.x),
-    y: Math.round(posValues.y),
+    z: Math.round(posValues.z),
     p: Math.round(pDisplay),
     r: Math.round(rVal),
   };
@@ -2959,7 +2161,7 @@ function moveAbsPayloadChanged(nextPayload, lastPayload) {
   if (!lastPayload) {
     return true;
   }
-  return ["x", "y", "p", "r"].some(
+  return ["x", "z", "p", "r"].some(
     (key) => nextPayload[key] !== lastPayload[key]
   );
 }
@@ -3047,6 +2249,389 @@ function setupDirectControlPanel() {
   }
 }
 
+function normalizePointCloudSeconds() {
+  if (!pointCloudSecondsInput) {
+    return 30;
+  }
+  const min = Number.parseFloat(pointCloudSecondsInput.min) || 1;
+  const max = Number.parseFloat(pointCloudSecondsInput.max) || 300;
+  let value = Number.parseFloat(pointCloudSecondsInput.value);
+  if (!Number.isFinite(value)) {
+    value = 30;
+  }
+  value = clamp(value, min, max);
+  const rounded = Math.round(value);
+  pointCloudSecondsInput.value = rounded.toString();
+  return rounded;
+}
+
+function setPointCloudStatus(message, isError = false) {
+  if (!pointCloudStatus) {
+    return;
+  }
+  pointCloudStatus.textContent = message || "";
+  pointCloudStatus.classList.toggle("is-error", Boolean(message) && isError);
+}
+
+function syncPointCloudControls() {
+  const isBusy = pointCloudState.active || pointCloudState.starting;
+  if (pointCloudStartButton) {
+    if (!pointCloudStartButton.dataset.label) {
+      pointCloudStartButton.dataset.label = pointCloudStartButton.textContent || "Start";
+    }
+    if (pointCloudState.starting) {
+      pointCloudStartButton.textContent = "Starting...";
+    } else if (pointCloudState.active) {
+      pointCloudStartButton.textContent = "Measuring...";
+    } else {
+      pointCloudStartButton.textContent = pointCloudStartButton.dataset.label;
+    }
+    pointCloudStartButton.disabled = isBusy;
+    pointCloudStartButton.classList.toggle("is-running", pointCloudState.active);
+  }
+  if (pointCloudStopButton) {
+    pointCloudStopButton.disabled = !pointCloudState.active;
+  }
+  if (pointCloudSecondsInput) {
+    pointCloudSecondsInput.disabled = isBusy;
+  }
+}
+
+function getMeasurementAngleRad() {
+  const apiAngleRad = apiPToAngleRad(lastApiP);
+  if (Number.isFinite(apiAngleRad)) {
+    return apiAngleRad;
+  }
+  return getPAxisAngleRad();
+}
+
+function getMeasurementBasePosition(target) {
+  if (!target) {
+    return null;
+  }
+  if (lastApiScene && Number.isFinite(lastApiScene.x) && Number.isFinite(lastApiScene.y)) {
+    target.set(lastApiScene.x, lastApiScene.y, 0);
+    return target;
+  }
+  const xLeft = xAxisInput ? Number.parseFloat(xAxisInput.value) : 0;
+  const zVal = zAxisInput ? Number.parseFloat(zAxisInput.value) : 0;
+  target.set(
+    Number.isFinite(xLeft) ? xLeft : 0,
+    Number.isFinite(zVal) ? zVal : 0,
+    0
+  );
+  return target;
+}
+
+function getMeasurementOrigin(target) {
+  if (!target) {
+    return null;
+  }
+  getMeasurementBasePosition(target);
+  target.add(measurementOffset);
+  return target;
+}
+
+function updateLaserGuide() {
+  if (!laserGuideGroup.visible) {
+    return;
+  }
+  const angleRad = getMeasurementAngleRad();
+  if (!Number.isFinite(angleRad)) {
+    return;
+  }
+  getMeasurementOrigin(measurementOrigin);
+  measurementDirection.set(Math.cos(angleRad), Math.sin(angleRad), 0);
+  measurementEnd.copy(measurementOrigin).addScaledVector(
+    measurementDirection,
+    measurementLaserLength
+  );
+  laserGuideDot.position.copy(measurementOrigin);
+  laserGuideLine.geometry.setFromPoints([measurementOrigin, measurementEnd]);
+  laserGuideLine.geometry.computeBoundingSphere();
+}
+
+function addPointCloudSample(rangeMm) {
+  if (!Number.isFinite(rangeMm) || rangeMm <= 0) {
+    return;
+  }
+  const angleRad = getMeasurementAngleRad();
+  if (!Number.isFinite(angleRad)) {
+    return;
+  }
+  if (pointCloudMesh.count >= pointCloudMaxPoints) {
+    setPointCloudStatus("Point cloud limit reached.", true);
+    return;
+  }
+  getMeasurementOrigin(measurementOrigin);
+  measurementDirection.set(Math.cos(angleRad), Math.sin(angleRad), 0);
+  measurementEnd.copy(measurementOrigin).addScaledVector(measurementDirection, rangeMm);
+  pointCloudDummy.position.copy(measurementEnd);
+  pointCloudDummy.updateMatrix();
+  pointCloudMesh.setMatrixAt(pointCloudMesh.count, pointCloudDummy.matrix);
+  pointCloudMesh.count += 1;
+  pointCloudMesh.instanceMatrix.needsUpdate = true;
+}
+
+function clearPointCloud() {
+  pointCloudMesh.count = 0;
+  pointCloudMesh.instanceMatrix.needsUpdate = true;
+}
+
+function normalizeRangeError(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number") {
+    return value === 0 ? null : value;
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    return null;
+  }
+  const numeric = Number.parseFloat(trimmed);
+  if (Number.isFinite(numeric) && numeric === 0) {
+    return null;
+  }
+  return trimmed;
+}
+
+function parseRangeFromText(text) {
+  if (typeof text !== "string") {
+    return { rangeMm: null, rangeErr: null };
+  }
+  let rangeMm = null;
+  let rangeErr = null;
+  const rangeMatch = /range_mm\s*[:=]\s*(-?\d+(?:\.\d+)?)/i.exec(text);
+  if (rangeMatch) {
+    const parsed = Number.parseFloat(rangeMatch[1]);
+    rangeMm = Number.isFinite(parsed) ? parsed : null;
+  }
+  const errMatch = /range\.err\s*[:=]\s*([^\s]+)/i.exec(text);
+  if (errMatch) {
+    rangeErr = errMatch[1];
+  }
+  return { rangeMm, rangeErr };
+}
+
+function parseRangePayload(payload, rawText) {
+  let rangeMm = null;
+  let rangeErr = null;
+  if (payload && typeof payload === "object") {
+    const metrics = payload.metrics && typeof payload.metrics === "object" ? payload.metrics : null;
+    if (metrics) {
+      rangeMm = readNumeric(metrics.range_mm);
+      if (Object.prototype.hasOwnProperty.call(metrics, "range.err")) {
+        rangeErr = metrics["range.err"];
+      }
+    }
+    const lineText = typeof payload.line === "string" ? payload.line : "";
+    if (lineText) {
+      const parsed = parseRangeFromText(lineText);
+      if (rangeMm === null && parsed.rangeMm !== null) {
+        rangeMm = parsed.rangeMm;
+      }
+      if (rangeErr === null && parsed.rangeErr !== null) {
+        rangeErr = parsed.rangeErr;
+      }
+    }
+  }
+  if (rangeMm === null || rangeErr === null) {
+    const parsed = parseRangeFromText(rawText);
+    if (rangeMm === null && parsed.rangeMm !== null) {
+      rangeMm = parsed.rangeMm;
+    }
+    if (rangeErr === null && parsed.rangeErr !== null) {
+      rangeErr = parsed.rangeErr;
+    }
+  }
+  return { rangeMm, rangeErr: normalizeRangeError(rangeErr) };
+}
+
+function closePointCloudSocket() {
+  if (!pointCloudState.socket) {
+    return;
+  }
+  const socket = pointCloudState.socket;
+  pointCloudState.closing = true;
+  pointCloudState.socket = null;
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+    socket.close();
+  }
+}
+
+function handlePointCloudMessage(event) {
+  if (!pointCloudState.active) {
+    return;
+  }
+  let payload = null;
+  if (typeof event.data === "string") {
+    try {
+      payload = JSON.parse(event.data);
+    } catch (err) {
+      payload = null;
+    }
+  }
+  const { rangeMm, rangeErr } = parseRangePayload(payload, event.data);
+  if (Number.isFinite(rangeMm)) {
+    addPointCloudSample(rangeMm);
+  }
+  if (rangeErr !== null) {
+    setPointCloudStatus(`Range error ${rangeErr}.`, true);
+  }
+}
+
+function openPointCloudSocket() {
+  closePointCloudSocket();
+  let socket;
+  try {
+    socket = new WebSocket(measureSocketUrl);
+  } catch (err) {
+    setPointCloudStatus("WebSocket unavailable.", true);
+    return false;
+  }
+  pointCloudState.socket = socket;
+  socket.addEventListener("message", handlePointCloudMessage);
+  socket.addEventListener("error", () => {
+    if (pointCloudState.active) {
+      setPointCloudStatus("WebSocket error.", true);
+    }
+  });
+  socket.addEventListener("close", () => {
+    const closing = pointCloudState.closing;
+    pointCloudState.socket = null;
+    pointCloudState.closing = false;
+    if (pointCloudState.active && !closing) {
+      pointCloudState.active = false;
+      syncPointCloudControls();
+      setPointCloudStatus("Stream closed.", true);
+    }
+  });
+  return true;
+}
+
+async function postMeasure(axis, seconds) {
+  const response = await fetch(measureUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ axis, seconds }),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch (err) {
+      detail = "";
+    }
+    throw new Error(`measure ${response.status} ${detail}`.trim());
+  }
+  return response.json().catch(() => null);
+}
+
+function schedulePointCloudStop(seconds) {
+  if (pointCloudState.stopTimer) {
+    window.clearTimeout(pointCloudState.stopTimer);
+  }
+  const durationMs = Math.max(0, seconds) * 1000 + 250;
+  pointCloudState.stopTimer = window.setTimeout(() => {
+    pointCloudState.stopTimer = null;
+    stopPointCloudMeasurement({ manual: false });
+  }, durationMs);
+}
+
+async function startPointCloudMeasurement() {
+  if (pointCloudState.active || pointCloudState.starting) {
+    return;
+  }
+  pointCloudState.starting = true;
+  syncPointCloudControls();
+  setPointCloudStatus("Starting measurement...");
+  const seconds = normalizePointCloudSeconds();
+  try {
+    await postMeasure(measureAxis, seconds);
+  } catch (err) {
+    pointCloudState.starting = false;
+    syncPointCloudControls();
+    setPointCloudStatus("Measurement start failed.", true);
+    return;
+  }
+  pointCloudState.starting = false;
+  pointCloudState.active = true;
+  syncPointCloudControls();
+  setPointCloudStatus("Collecting samples...");
+  const opened = openPointCloudSocket();
+  if (!opened) {
+    pointCloudState.active = false;
+    syncPointCloudControls();
+    return;
+  }
+  schedulePointCloudStop(seconds);
+}
+
+async function stopPointCloudMeasurement({ manual = true } = {}) {
+  if (pointCloudState.stopTimer) {
+    window.clearTimeout(pointCloudState.stopTimer);
+    pointCloudState.stopTimer = null;
+  }
+  if (!pointCloudState.active && !pointCloudState.starting) {
+    syncPointCloudControls();
+    return;
+  }
+  pointCloudState.active = false;
+  pointCloudState.starting = false;
+  syncPointCloudControls();
+  closePointCloudSocket();
+  if (manual) {
+    try {
+      await postStopAxis(measureAxis);
+    } catch (err) {
+      setPointCloudStatus("Stop failed.", true);
+      return;
+    }
+    setPointCloudStatus("Measurement stopped.");
+    return;
+  }
+  setPointCloudStatus("Measurement complete.");
+}
+
+function setupPointCloudControls() {
+  if (!pointCloudPanel) {
+    return;
+  }
+  normalizePointCloudSeconds();
+  syncPointCloudControls();
+  setPointCloudStatus("Ready.");
+  if (pointCloudSecondsInput) {
+    pointCloudSecondsInput.addEventListener("change", () => {
+      normalizePointCloudSeconds();
+    });
+  }
+  if (pointCloudStartButton) {
+    pointCloudStartButton.addEventListener("click", startPointCloudMeasurement);
+  }
+  if (pointCloudStopButton) {
+    pointCloudStopButton.addEventListener("click", () => {
+      stopPointCloudMeasurement({ manual: true });
+    });
+  }
+  if (pointCloudClearButton) {
+    pointCloudClearButton.addEventListener("click", () => {
+      clearPointCloud();
+      setPointCloudStatus("Point cloud cleared.");
+    });
+  }
+  if (pointCloudLaserToggle) {
+    laserGuideGroup.visible = pointCloudLaserToggle.checked;
+    pointCloudLaserToggle.addEventListener("change", () => {
+      laserGuideGroup.visible = pointCloudLaserToggle.checked;
+      updateLaserGuide();
+    });
+  }
+  updateLaserGuide();
+}
+
 const scanMoveTolerance = 1.5;
 const scanRotateTolerance = 10;
 const scanMoveTimeoutMs = 20000;
@@ -3109,13 +2694,13 @@ function getScanSettings() {
 function getAxisBounds() {
   const xMin = xAxisInput ? Number.parseFloat(xAxisInput.min) : 0;
   const xMax = xAxisInput ? Number.parseFloat(xAxisInput.max) : 0;
-  const yMin = yAxisInput ? Number.parseFloat(yAxisInput.min) : 0;
-  const yMax = yAxisInput ? Number.parseFloat(yAxisInput.max) : 0;
+  const zMin = zAxisInput ? Number.parseFloat(zAxisInput.min) : 0;
+  const zMax = zAxisInput ? Number.parseFloat(zAxisInput.max) : 0;
   return {
     xMin: Number.isFinite(xMin) ? xMin : 0,
     xMax: Number.isFinite(xMax) ? xMax : 0,
-    yMin: Number.isFinite(yMin) ? yMin : 0,
-    yMax: Number.isFinite(yMax) ? yMax : 0,
+    zMin: Number.isFinite(zMin) ? zMin : 0,
+    zMax: Number.isFinite(zMax) ? zMax : 0,
   };
 }
 
@@ -3144,10 +2729,10 @@ function clampPathPoints(points, bounds) {
   const clamped = [];
   points.forEach((point) => {
     const x = clamp(point.x, bounds.xMin, bounds.xMax);
-    const y = clamp(point.y, bounds.yMin, bounds.yMax);
+    const zVal = clamp(point.y, bounds.zMin, bounds.zMax);
     const prev = clamped[clamped.length - 1];
-    if (!prev || Math.hypot(x - prev.x, y - prev.y) > 0.001) {
-      clamped.push({ x, y });
+    if (!prev || Math.hypot(x - prev.x, zVal - prev.y) > 0.001) {
+      clamped.push({ x, y: zVal });
     }
   });
   return clamped;
@@ -3328,8 +2913,8 @@ function deflectionToPDisplay(deflection) {
   return (-deflection / 90) * 255;
 }
 
-function getLockOriginDeflection(xVal, yVal) {
-  const desiredAngle = angleToOrigin(xVal, yVal);
+function getLockOriginDeflection(xVal, zVal) {
+  const desiredAngle = angleToOrigin(xVal, zVal);
   return angleToDeflection(desiredAngle);
 }
 
@@ -3337,8 +2922,8 @@ function setAxisInputsFromScan(point, deflection, rPos, shouldUpdateScene = true
   if (xAxisInput) {
     xAxisInput.value = point.x.toFixed(1);
   }
-  if (yAxisInput) {
-    yAxisInput.value = point.y.toFixed(1);
+  if (zAxisInput) {
+    zAxisInput.value = point.y.toFixed(1);
   }
   if (pAxisInput) {
     pAxisInput.value = deflection.toFixed(1);
@@ -3356,8 +2941,8 @@ function applyDryRunState(point, deflection, rPos) {
   const pDisplay = clamp(deflectionToPDisplay(deflection), -255, 255);
   const raw = {
     x: Math.round(pos.x),
-    y: Math.round(pos.y),
-    z: null,
+    z: Math.round(pos.z),
+    y: null,
     p: Math.round(pDisplay),
     r: Math.round(rPos),
   };
@@ -3399,6 +2984,7 @@ function setScanInputsDisabled(disabled) {
     scanRepeatsInput,
     scanStartDirectionInput,
     scanDryRunInput,
+    scanStartCenterInput,
   ].forEach((input) => {
     if (input) {
       input.disabled = disabled;
@@ -3546,7 +3132,7 @@ async function executeWaypoint(point, currentR, rotationDirection = 1) {
   }
   const payload = {
     x: Math.round(pos.x),
-    y: Math.round(pos.y),
+    z: Math.round(pos.z),
     p: Math.round(pDisplay),
     r: Math.round(currentR),
   };
@@ -3585,6 +3171,7 @@ async function startScanSequence() {
     return;
   }
   const isDryRun = scanDryRunInput ? scanDryRunInput.checked : false;
+  const startAtCenter = scanStartCenterInput ? scanStartCenterInput.checked : true;
   if (!isDryRun && !isDirectControlAvailable(lastApiStatus, lastApiHomed)) {
     scanStartButton.classList.add("is-error");
     scanStartButton.textContent = "API Offline";
@@ -3607,10 +3194,11 @@ async function startScanSequence() {
   const reverse = [...forward].reverse();
   const reversePass = reverse.length > 1 ? reverse.slice(1) : reverse;
   const forwardPassLoop = forward.length > 1 ? forward.slice(1) : forward;
-  const totalSteps =
-    forward.length +
-    reversePass.length +
-    Math.max(0, settings.repeats - 1) * (forwardPassLoop.length + reversePass.length);
+  const centerIndex = startAtCenter ? Math.floor(forward.length / 2) : 0;
+  const forwardPassFirst = startAtCenter ? forward.slice(centerIndex) : forward;
+  const firstCycleSteps = forwardPassFirst.length + reversePass.length;
+  const loopCycleSteps = forwardPassLoop.length + reversePass.length;
+  const totalSteps = firstCycleSteps + Math.max(0, settings.repeats - 1) * loopCycleSteps;
   resetScanProgress(totalSteps);
   scanState.dryRun = isDryRun;
   setScanModeActive(true);
@@ -3618,7 +3206,7 @@ async function startScanSequence() {
   let currentR = getCurrentRPos();
   try {
     for (let cycle = 0; cycle < settings.repeats; cycle += 1) {
-      const forwardPass = cycle === 0 ? forward : forwardPassLoop;
+      const forwardPass = cycle === 0 ? forwardPassFirst : forwardPassLoop;
       currentR = await runWaypointPass(forwardPass, currentR, 1);
       currentR = await runWaypointPass(reversePass, currentR, -1);
     }
@@ -3656,10 +3244,11 @@ function setupScanControls() {
   }
 }
 
-const driverAxes = ["x1", "x2", "y", "r"];
-const stopAxes = ["x", "y", "p", "r", "x1", "x2"];
+const driverAxes = ["x1", "x2", "z", "r"];
+const stopAxes = ["x", "z", "p", "r", "x1", "x2"];
 let popupZIndex = 6;
 let emergencyStopInFlight = false;
+let homeZInFlight = false;
 
 function clearElement(node) {
   while (node.firstChild) {
@@ -3886,6 +3475,53 @@ async function postStopAxis(axis) {
   return response.json().catch(() => null);
 }
 
+async function postHomeAxis(axis) {
+  const response = await fetch(homeUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ axis }),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch (err) {
+      detail = "";
+    }
+    throw new Error(`home ${axis} ${response.status} ${detail}`.trim());
+  }
+  return response.json().catch(() => null);
+}
+
+async function triggerHomeZ() {
+  if (!homeZButton || homeZInFlight) {
+    return;
+  }
+  homeZInFlight = true;
+  const label = homeZButton.textContent || "Home";
+  homeZButton.textContent = "Homing...";
+  homeZButton.disabled = true;
+  try {
+    await postHomeAxis("z");
+    homeZButton.textContent = label;
+  } catch (err) {
+    console.warn("home z failed", err);
+    homeZButton.classList.add("is-error");
+    homeZButton.textContent = "Home Failed";
+    window.setTimeout(() => {
+      if (homeZButton) {
+        homeZButton.classList.remove("is-error");
+        homeZButton.textContent = label;
+      }
+    }, 1200);
+  } finally {
+    homeZButton.disabled = false;
+    homeZInFlight = false;
+  }
+}
+
 async function triggerEmergencyStop() {
   if (!emergencyStopButton || emergencyStopInFlight) {
     return;
@@ -3933,8 +3569,8 @@ function updateApiReadout(raw, status) {
   if (apiPosX) {
     apiPosX.textContent = formatApiNumber(values.x);
   }
-  if (apiPosY) {
-    apiPosY.textContent = formatApiNumber(values.y);
+  if (apiPosZ) {
+    apiPosZ.textContent = formatApiNumber(values.z);
   }
   if (apiPosP) {
     apiPosP.textContent = formatApiNumber(values.p);
@@ -3952,7 +3588,7 @@ function extractPosFromPayload(payload) {
     return null;
   }
   const axes = {};
-  ["x", "y", "z", "x1", "x2", "p", "r", "homed"].forEach((key) => {
+  ["x", "z", "y", "x1", "x2", "p", "r", "homed"].forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(payload, key)) {
       const numeric = readNumeric(payload[key]);
       if (numeric !== null) {
@@ -3972,27 +3608,27 @@ function extractPosFromPayload(payload) {
   }
 
   const rawX = axes.x ?? axes.x1 ?? null;
-  const rawY = axes.y ?? null;
   const rawZ = axes.z ?? null;
+  const rawY = axes.y ?? null;
 
-  if (rawX === null || rawY === null) {
+  if (rawX === null || rawZ === null) {
     return null;
   }
 
-  const mapped = posToScene(rawX, rawY);
+  const mapped = posToScene(rawX, rawZ);
   const homed = axes.homed ?? null;
   return {
     raw: {
       x: rawX,
-      y: rawY,
       z: rawZ,
+      y: rawY,
       p: axes.p ?? null,
       r: axes.r ?? null,
     },
     scene: {
       x: mapped.x,
       y: mapped.y,
-      z: Number.isFinite(rawZ) ? rawZ : 0,
+      z: Number.isFinite(rawY) ? rawY : 0,
     },
     homed: Number.isFinite(homed) ? homed : null,
   };
@@ -4024,6 +3660,7 @@ async function pollPosApi() {
     apiMarker.position.set(posData.scene.x, posData.scene.y, posData.scene.z);
     apiMarker.visible = true;
     updateApiDirectionLine(getPAxisAngleRad());
+    updateLaserGuide();
   } catch (err) {
     console.warn("pos api poll failed", err);
     updateApiReadout(null, "error");
@@ -4059,13 +3696,6 @@ function handleResize() {
   if (scanPathGlowMaterial && scanPathGlowMaterial.resolution) {
     scanPathGlowMaterial.resolution.set(width, height);
   }
-  if (composer) {
-    composer.setSize(width, height);
-  }
-  if (bloomPass && bloomPass.setSize) {
-    bloomPass.setSize(width, height);
-  }
-
   if (axisRenderer && axisCanvas) {
     const axisWidth = axisCanvas.clientWidth;
     const axisHeight = axisCanvas.clientHeight;
@@ -4145,25 +3775,25 @@ function onPointerMove(event) {
     const hit = dragRaycaster.ray.intersectPlane(plane, intersection);
     if (hit) {
       if (dragState.type === "x") {
-        const nextX = clampInputValue(intersection.x, xAxisInput);
-        xAxisInput.value = nextX.toFixed(1);
+        const nextX = clampInputValue(intersection.x, xAxisInput, false);
+        xAxisInput.value = nextX.toFixed(dragPrecision);
         updateScene();
-      } else if (dragState.type === "y") {
-        const nextY = clampInputValue(intersection.y, yAxisInput);
-        yAxisInput.value = nextY.toFixed(1);
+      } else if (dragState.type === "z") {
+        const nextZ = clampInputValue(intersection.y, zAxisInput, false);
+        zAxisInput.value = nextZ.toFixed(dragPrecision);
         updateScene();
-      } else if (dragState.type === "xy") {
-        const nextX = clampInputValue(intersection.x, xAxisInput);
-        const nextY = clampInputValue(intersection.y, yAxisInput);
-        xAxisInput.value = nextX.toFixed(1);
-        yAxisInput.value = nextY.toFixed(1);
+      } else if (dragState.type === "xz") {
+        const nextX = clampInputValue(intersection.x, xAxisInput, false);
+        const nextZ = clampInputValue(intersection.y, zAxisInput, false);
+        xAxisInput.value = nextX.toFixed(dragPrecision);
+        zAxisInput.value = nextZ.toFixed(dragPrecision);
         updateScene();
       } else if (dragState.type === "p") {
         const baseX = parseFloat(xAxisInput.value);
-        const baseY = parseFloat(yAxisInput.value);
-        const angle = THREE.MathUtils.radToDeg(Math.atan2(intersection.y - baseY, intersection.x - baseX));
+        const baseZ = parseFloat(zAxisInput.value);
+        const angle = THREE.MathUtils.radToDeg(Math.atan2(intersection.y - baseZ, intersection.x - baseX));
         const deflection = angleToDeflection(angle);
-        pAxisInput.value = deflection.toFixed(1);
+        pAxisInput.value = deflection.toFixed(dragPrecision);
         updateScene();
       } else if (dragState.type === "r") {
         const angle = THREE.MathUtils.radToDeg(
@@ -4237,7 +3867,7 @@ function onViewCubePointer(event) {
   setOrbitToDirection(snapped);
 }
 
-[yAxisInput, xAxisInput, pAxisInput, rAxisInput].forEach((input) => {
+[zAxisInput, xAxisInput, pAxisInput, rAxisInput].forEach((input) => {
   input.addEventListener("input", updateScene);
 });
 lockOriginInput.addEventListener("change", updateScene);
@@ -4263,19 +3893,25 @@ if (cameraModeSelect) {
   setCameraMode(cameraModeSelect.value);
 }
 
-if (controlsToggle && controlsPanel) {
-  const setControlsCollapsed = (collapsed) => {
-    controlsPanel.classList.toggle("is-collapsed", collapsed);
-    if (controlsToggleIcon) {
-      controlsToggleIcon.textContent = collapsed ? "^" : "v";
+function setupHudToggle(panel, toggle, icon) {
+  if (!panel || !toggle) {
+    return;
+  }
+  const syncToggle = () => {
+    const collapsed = panel.classList.contains("is-collapsed");
+    if (icon) {
+      icon.textContent = collapsed ? "^" : "v";
     }
   };
-  setControlsCollapsed(controlsPanel.classList.contains("is-collapsed"));
-  controlsToggle.addEventListener("click", () => {
-    const nextCollapsed = !controlsPanel.classList.contains("is-collapsed");
-    setControlsCollapsed(nextCollapsed);
+  syncToggle();
+  toggle.addEventListener("click", () => {
+    panel.classList.toggle("is-collapsed");
+    syncToggle();
   });
 }
+
+setupHudToggle(pointCloudPanel, pointCloudToggle, pointCloudToggleIcon);
+setupHudToggle(controlsPanel, controlsToggle, controlsToggleIcon);
 
 if (viewReadout) {
   viewReadout.addEventListener("click", async () => {
@@ -4312,6 +3948,12 @@ if (driverSettingsButton) {
   });
 }
 
+if (homeZButton) {
+  homeZButton.addEventListener("click", () => {
+    triggerHomeZ();
+  });
+}
+
 if (emergencyStopButton) {
   emergencyStopButton.addEventListener("click", () => {
     triggerEmergencyStop();
@@ -4321,6 +3963,7 @@ if (emergencyStopButton) {
 setupAxisTuningControls();
 setupDirectControlPanel();
 setupScanControls();
+setupPointCloudControls();
 
 window.addEventListener("keydown", (event) => {
   if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {
@@ -4374,12 +4017,13 @@ function animate(time) {
   const pulse = (Math.sin(time * 0.0012) + 1) * 0.5;
   apiGlow.material.opacity = 0.25 + pulse * 0.2;
   discHalo.material.opacity = 0.12 + pulse * 0.08;
-
-  if (composer) {
-    composer.render();
-  } else {
-    renderer.render(scene, camera);
+  skyDome.position.copy(camera.position);
+  if (coordLabelGroup.visible) {
+    updateCoordLabels();
+    updateScanDistanceLabel();
   }
+
+  renderer.render(scene, camera);
   if (axisRenderer && axisScene && axisCamera) {
     axisViewDirection.copy(camera.position).sub(orbit.target).normalize();
     axisCamera.position.copy(axisViewDirection).multiplyScalar(20);
