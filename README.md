@@ -45,6 +45,11 @@ visualization mode and disables API-driven controls.
 - Keyboard: WASD pans the view target.
 - Viewcube: click faces to snap view; camera selector toggles perspective/orthographic.
 
+### Scene Reference
+- Disc top surface sits at X0/Z-18 (disc center at Z-22 with 8 mm thickness).
+- Scan origin anchor is at X0/Z30.
+- Z-axis slider lower limit is 30.
+
 ## Direct Control
 
 When enabled, the UI periodically sends `/moveabs` updates based on the current slider

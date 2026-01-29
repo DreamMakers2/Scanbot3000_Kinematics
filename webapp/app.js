@@ -633,7 +633,7 @@ const axisThickness = 16;
 const apiDirectionLineLength = 500;
 const apiDirectionFadeLength = 100;
 const apiDirectionFadeSegments = 10;
-const scanOrigin = new THREE.Vector3(x0, 27, 0);
+const scanOrigin = new THREE.Vector3(x0, 30, 0);
 const floorOffset = baseOffset - axisThickness / 2;
 woodFloor.position.y = floorOffset - floorThickness / 2;
 floorSheen.position.y = floorOffset + 0.4;
@@ -983,10 +983,6 @@ const sphereMaterial = new THREE.MeshPhysicalMaterial({
   envMapIntensity: 0.85,
 });
 const anchorGeometry = new THREE.SphereGeometry(12, 18, 18);
-const originMarker = new THREE.Mesh(anchorGeometry, sphereMaterial);
-originMarker.position.set(0, 0, 0);
-setShadow(originMarker);
-scene.add(originMarker);
 const stageMarker = new THREE.Mesh(anchorGeometry, sphereMaterial);
 stageMarker.position.set(x1, baseOffset, 0);
 setShadow(stageMarker);
@@ -994,7 +990,7 @@ scene.add(stageMarker);
 
 const discRadius = 200;
 const discThickness = 8;
-const discCenter = new THREE.Vector3(0, -4, 0);
+const discCenter = new THREE.Vector3(0, -22, 0);
 const discTopY = discCenter.y + discThickness / 2;
 const discSurfaceMaterial = makeAnodizedMaterial(rAxisColor, {
   emissiveIntensity: 0.12,
@@ -1745,6 +1741,7 @@ const measurementOffset = new THREE.Vector3(2, 25.5, 0);
 const measurementOffsetAxis = new THREE.Vector3(0, 0, 1);
 const measurementOffsetRotated = new THREE.Vector3();
 const measurementLaserLength = 200;
+const laserGuideOutOfPlaneOffset = 4.2;
 const pointCloudState = {
   active: false,
   starting: false,
@@ -1986,16 +1983,16 @@ function computeSweepLedState(nowMs) {
   const loopLength = Math.max(1, totalSteps * 2 - 2);
   const step = Math.floor(nowMs / ledSweepStepMs) % loopLength;
   const forwardStep = step < totalSteps ? step : loopLength - step;
-  const axisIndex = Math.floor(forwardStep / ledCount);
-  const posIndex = forwardStep % ledCount;
-  const axis = ledAxes[axisIndex];
-  const centerLed = ledCount - 1 - posIndex;
   const offsetStart = Math.floor(ledSweepWeights.length / 2);
   ledSweepWeights.forEach((weight, idx) => {
-    const ledIndex = centerLed + (idx - offsetStart);
-    if (ledIndex < 0 || ledIndex >= ledCount) {
+    const linearIndex = forwardStep + (idx - offsetStart);
+    if (linearIndex < 0 || linearIndex >= totalSteps) {
       return;
     }
+    const axisIndex = Math.floor(linearIndex / ledCount);
+    const posIndex = linearIndex % ledCount;
+    const axis = ledAxes[axisIndex];
+    const ledIndex = ledCount - 1 - posIndex;
     state[axis][ledIndex] = scaleHexColor(ledSweepColor, weight);
   });
   return state;
@@ -2794,6 +2791,7 @@ function updateLaserGuide() {
     return;
   }
   getMeasurementOrigin(measurementOrigin);
+  measurementOrigin.z += laserGuideOutOfPlaneOffset;
   measurementDirection.set(Math.cos(angleRad), Math.sin(angleRad), 0);
   measurementEnd.copy(measurementOrigin).addScaledVector(
     measurementDirection,
