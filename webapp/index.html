@@ -34,6 +34,10 @@
           <span class="api-status-time" id="apiStatusTime">0s</span>
         </div>
         <div class="hud-stack">
+          <div class="led-panel" id="ledPanel">
+            <div class="led-title">Axis LEDs</div>
+            <div class="led-grid" id="ledGrid" role="group" aria-label="Axis LED controls"></div>
+          </div>
           <div class="scan-panel" id="scanPanel">
             <div class="scan-title">Scan Path</div>
             <div class="control">
@@ -83,7 +87,17 @@
                 <output id="scanEstimate">--</output>
               </div>
             </div>
-            <button class="scan-start" id="scanStart" type="button">Start Scan</button>
+            <div class="scan-actions">
+              <button class="scan-start" id="scanStart" type="button">Start Scan</button>
+              <div class="scan-run-controls" id="scanRunControls">
+                <button class="scan-action scan-action--pause" id="scanPause" type="button">
+                  Pause
+                </button>
+                <button class="scan-action scan-action--stop" id="scanStop" type="button">
+                  Stop
+                </button>
+              </div>
+            </div>
           </div>
           <div class="hud pointcloud-panel" id="pointCloudPanel">
             <button class="hud-title" id="pointCloudToggle" type="button">
@@ -101,7 +115,7 @@
                 <button class="pointcloud-button is-clear" id="pointCloudClear" type="button">Clear</button>
               </div>
               <div class="toggle">
-                <input id="pointCloudLaserToggle" type="checkbox" />
+                <input id="pointCloudLaserToggle" type="checkbox" checked />
                 <label for="pointCloudLaserToggle">Show Laser</label>
               </div>
               <div class="pointcloud-status" id="pointCloudStatus" aria-live="polite"></div>

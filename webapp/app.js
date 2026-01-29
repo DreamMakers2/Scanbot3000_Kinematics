@@ -1190,7 +1190,10 @@ const pointCloudMesh = new THREE.InstancedMesh(
 pointCloudMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 pointCloudMesh.count = 0;
 pointCloudMesh.frustumCulled = false;
-scene.add(pointCloudMesh);
+const pointCloudGroup = new THREE.Group();
+pointCloudGroup.position.copy(discCenter);
+pointCloudGroup.add(pointCloudMesh);
+scene.add(pointCloudGroup);
 const pointCloudDummy = new THREE.Object3D();
 
 const laserGuideGroup = new THREE.Group();
@@ -1506,6 +1509,8 @@ const rAxisInput = document.getElementById("rAxis");
 const lockOriginInput = document.getElementById("lockOrigin");
 const labelsToggleInput = document.getElementById("toggleLabels");
 const coordLabelsToggleInput = document.getElementById("toggleCoordLabels");
+const ledPanel = document.getElementById("ledPanel");
+const ledGrid = document.getElementById("ledGrid");
 const scanPanel = document.getElementById("scanPanel");
 const scanRadiusInput = document.getElementById("scanRadius");
 const scanWaypointsInput = document.getElementById("scanWaypoints");
@@ -1514,6 +1519,9 @@ const scanStartDirectionInput = document.getElementById("scanStartDirection");
 const scanDryRunInput = document.getElementById("scanDryRun");
 const scanStartCenterInput = document.getElementById("scanStartCenter");
 const scanStartButton = document.getElementById("scanStart");
+const scanRunControls = document.getElementById("scanRunControls");
+const scanPauseButton = document.getElementById("scanPause");
+const scanStopButton = document.getElementById("scanStop");
 const scanProgressText = document.getElementById("scanProgressText");
 const scanProgressFill = document.getElementById("scanProgressFill");
 const scanEstimateText = document.getElementById("scanEstimate");
@@ -1717,6 +1725,7 @@ const coordStatusUrl = `${apiBaseUrl}/coordstatus`;
 const stopUrl = `${apiBaseUrl}/stop`;
 const homeUrl = `${apiBaseUrl}/home`;
 const measureUrl = `${apiBaseUrl}/measure`;
+const ledUrl = `${apiBaseUrl}/led`;
 const apiRootUrl = apiBaseUrl.replace(/\/api\/?$/, "");
 const wsBaseUrl = apiRootUrl.replace(/^http/, "ws");
 const measureAxis = "r";
@@ -1732,7 +1741,9 @@ let apiStatusTimer = null;
 let apiStatusInFlight = false;
 let apiOnlineSince = null;
 let apiOfflineSince = null;
-const measurementOffset = new THREE.Vector3(-2, -25.5, 0);
+const measurementOffset = new THREE.Vector3(2, 25.5, 0);
+const measurementOffsetAxis = new THREE.Vector3(0, 0, 1);
+const measurementOffsetRotated = new THREE.Vector3();
 const measurementLaserLength = 200;
 const pointCloudState = {
   active: false,
@@ -1741,10 +1752,47 @@ const pointCloudState = {
   stopTimer: null,
   closing: false,
 };
+const ledAxes = ["x2", "x1", "z", "r"];
+const ledCount = 8;
+const ledSweepColor = "0000FF";
+const ledSweepWeights = [0.2, 0.4, 1, 0.4, 0.2];
+const ledTargetColor = "CCCC00";
+const ledActualColors = {
+  x2: "FF00FF",
+  x1: "FF0000",
+  z: "0000FF",
+  r: "00FFFF",
+};
+const ledAxisRanges = {
+  x2: { min: -255, max: 255 },
+  x1: { min: 0, max: 2100 },
+  z: { min: -11500, max: -50 },
+  r: { min: 0, max: 360 },
+};
+const ledOffColor = "000000";
+const ledUnset = "------";
+const ledSweepStepMs = 220;
+const ledLastSent = ledAxes.reduce((acc, axis) => {
+  acc[axis] = Array.from({ length: ledCount }, () => null);
+  return acc;
+}, {});
+const ledButtons = ledAxes.reduce((acc, axis) => {
+  acc[axis] = [];
+  return acc;
+}, {});
+const ledUpdateInFlight = ledAxes.reduce((acc, axis) => {
+  acc[axis] = false;
+  return acc;
+}, {});
+let ledUpdateTimer = null;
+let homingActive = false;
+let apiIsOnline = null;
 const measurementBase = new THREE.Vector3();
 const measurementOrigin = new THREE.Vector3();
 const measurementDirection = new THREE.Vector3();
 const measurementEnd = new THREE.Vector3();
+const measurementLocal = new THREE.Vector3();
+const pointCloudRotationSign = -1;
 
 function readNumeric(value) {
   if (typeof value === "number") {
@@ -1755,6 +1803,365 @@ function readNumeric(value) {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function toHexByte(value) {
+  const clamped = Math.max(0, Math.min(255, Math.round(value)));
+  return clamped.toString(16).padStart(2, "0").toUpperCase();
+}
+
+function scaleHexColor(hex, factor) {
+  const safeHex = (hex || ledOffColor).replace("#", "");
+  if (safeHex.length !== 6) {
+    return ledOffColor;
+  }
+  const r = parseInt(safeHex.slice(0, 2), 16);
+  const g = parseInt(safeHex.slice(2, 4), 16);
+  const b = parseInt(safeHex.slice(4, 6), 16);
+  return `${toHexByte(r * factor)}${toHexByte(g * factor)}${toHexByte(b * factor)}`;
+}
+
+function isBrightColor(hex) {
+  const safeHex = (hex || ledOffColor).replace("#", "");
+  if (safeHex.length !== 6) {
+    return false;
+  }
+  const r = parseInt(safeHex.slice(0, 2), 16);
+  const g = parseInt(safeHex.slice(2, 4), 16);
+  const b = parseInt(safeHex.slice(4, 6), 16);
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luminance > 150;
+}
+
+function createLedState(fillColor = ledOffColor) {
+  return Array.from({ length: ledCount }, () => fillColor);
+}
+
+function mapValueToLedIndex(value, min, max) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const span = max - min;
+  if (span <= 0) {
+    return null;
+  }
+  const clampedValue = clamp(value, min, max);
+  const segment = Math.min(
+    ledCount - 1,
+    Math.max(0, Math.floor(((clampedValue - min) / span) * ledCount))
+  );
+  return ledCount - 1 - segment;
+}
+
+function normalizeAngle360(degrees) {
+  const raw = Number.isFinite(degrees) ? degrees : 0;
+  return ((raw % 360) + 360) % 360;
+}
+
+function setLedButtonVisual(button, axis, ledIndex, color) {
+  if (!button) {
+    return;
+  }
+  const normalized = (color || ledOffColor).replace("#", "").toUpperCase();
+  const isOff = normalized === ledOffColor;
+  if (isOff) {
+    button.style.backgroundColor = "rgba(31, 42, 42, 0.08)";
+    button.style.borderColor = "rgba(31, 42, 42, 0.12)";
+    button.style.color = "var(--ink-strong)";
+    button.style.boxShadow = "none";
+  } else {
+    const colorValue = `#${normalized}`;
+    button.style.backgroundColor = colorValue;
+    button.style.borderColor = colorValue;
+    button.style.color = isBrightColor(normalized) ? "var(--ink-strong)" : "#ffffff";
+    button.style.boxShadow = "0 6px 12px rgba(0, 0, 0, 0.12)";
+  }
+  const axisLabel = axis ? axis.toUpperCase() : "";
+  const labelParts = [];
+  if (axisLabel) {
+    labelParts.push(axisLabel);
+  }
+  if (Number.isFinite(ledIndex)) {
+    labelParts.push(`LED ${ledIndex}`);
+  }
+  button.setAttribute("aria-label", labelParts.join(" "));
+  button.title = labelParts.join(" ");
+}
+
+function getAxisActualValue(axis) {
+  if (!lastApiRaw) {
+    return null;
+  }
+  if (axis === "x2") {
+    return readNumeric(lastApiRaw.p);
+  }
+  if (axis === "x1") {
+    return readNumeric(lastApiRaw.x ?? lastApiRaw.x1);
+  }
+  if (axis === "z") {
+    return readNumeric(lastApiRaw.z);
+  }
+  if (axis === "r") {
+    return readNumeric(lastApiRaw.r);
+  }
+  return null;
+}
+
+function getAxisTargetValue(axis) {
+  if (axis === "x2") {
+    if (!pAxisInput) {
+      return null;
+    }
+    const pVal = Number.parseFloat(pAxisInput.value);
+    if (!Number.isFinite(pVal)) {
+      return null;
+    }
+    return clamp(deflectionToPDisplay(pVal), ledAxisRanges.x2.min, ledAxisRanges.x2.max);
+  }
+  if (axis === "x1") {
+    if (!xAxisInput || !zAxisInput) {
+      return null;
+    }
+    const xLeft = Number.parseFloat(xAxisInput.value);
+    const zVal = Number.parseFloat(zAxisInput.value);
+    if (!Number.isFinite(xLeft) || !Number.isFinite(zVal)) {
+      return null;
+    }
+    return sceneToPos(xLeft, zVal).x;
+  }
+  if (axis === "z") {
+    if (!xAxisInput || !zAxisInput) {
+      return null;
+    }
+    const xLeft = Number.parseFloat(xAxisInput.value);
+    const zVal = Number.parseFloat(zAxisInput.value);
+    if (!Number.isFinite(xLeft) || !Number.isFinite(zVal)) {
+      return null;
+    }
+    return sceneToPos(xLeft, zVal).z;
+  }
+  if (axis === "r") {
+    if (!rAxisInput) {
+      return null;
+    }
+    const rVal = Number.parseFloat(rAxisInput.value);
+    return Number.isFinite(rVal) ? rVal : null;
+  }
+  return null;
+}
+
+function getAxisLedIndex(axis, value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const range = ledAxisRanges[axis];
+  if (!range) {
+    return null;
+  }
+  let index = null;
+  if (axis === "r") {
+    const degrees = normalizeAngle360(rPosToDegrees(value));
+    index = mapValueToLedIndex(degrees, range.min, range.max);
+  } else {
+    index = mapValueToLedIndex(value, range.min, range.max);
+  }
+  if (!Number.isFinite(index)) {
+    return null;
+  }
+  if (axis === "x1" || axis === "z") {
+    return ledCount - 1 - index;
+  }
+  return index;
+}
+
+function computeSweepLedState(nowMs) {
+  const state = {};
+  ledAxes.forEach((axis) => {
+    state[axis] = createLedState();
+  });
+  const totalSteps = ledAxes.length * ledCount;
+  if (!totalSteps) {
+    return state;
+  }
+  const loopLength = Math.max(1, totalSteps * 2 - 2);
+  const step = Math.floor(nowMs / ledSweepStepMs) % loopLength;
+  const forwardStep = step < totalSteps ? step : loopLength - step;
+  const axisIndex = Math.floor(forwardStep / ledCount);
+  const posIndex = forwardStep % ledCount;
+  const axis = ledAxes[axisIndex];
+  const centerLed = ledCount - 1 - posIndex;
+  const offsetStart = Math.floor(ledSweepWeights.length / 2);
+  ledSweepWeights.forEach((weight, idx) => {
+    const ledIndex = centerLed + (idx - offsetStart);
+    if (ledIndex < 0 || ledIndex >= ledCount) {
+      return;
+    }
+    state[axis][ledIndex] = scaleHexColor(ledSweepColor, weight);
+  });
+  return state;
+}
+
+function computePositionLedState() {
+  const state = {};
+  ledAxes.forEach((axis) => {
+    state[axis] = createLedState();
+  });
+  ledAxes.forEach((axis) => {
+    const actualValue = getAxisActualValue(axis);
+    const targetValue = getAxisTargetValue(axis);
+    const actualIndex = getAxisLedIndex(axis, actualValue);
+    const targetIndex = getAxisLedIndex(axis, targetValue);
+    if (Number.isFinite(targetIndex) && targetIndex !== actualIndex) {
+      state[axis][targetIndex] = ledTargetColor;
+    }
+    if (Number.isFinite(actualIndex)) {
+      state[axis][actualIndex] = ledActualColors[axis] || ledOffColor;
+    }
+  });
+  return state;
+}
+
+function updateLedButtonGrid(desiredState) {
+  if (!ledGrid) {
+    return;
+  }
+  ledAxes.forEach((axis) => {
+    const axisButtons = ledButtons[axis];
+    const colors = desiredState[axis];
+    if (!axisButtons || !colors) {
+      return;
+    }
+    axisButtons.forEach((button, index) => {
+      setLedButtonVisual(button, axis, index, colors[index]);
+    });
+  });
+}
+
+function buildLedDeltaPayload(axis, desiredState) {
+  const lastState = ledLastSent[axis];
+  if (!desiredState || !lastState) {
+    return null;
+  }
+  const payload = { axis };
+  let changed = false;
+  for (let i = 0; i < ledCount; i += 1) {
+    const desired = desiredState[i] || ledOffColor;
+    const previous = lastState[i];
+    if (previous === desired) {
+      payload[`led${i}`] = ledUnset;
+    } else {
+      payload[`led${i}`] = desired;
+      changed = true;
+    }
+  }
+  return changed ? payload : null;
+}
+
+async function postAxisLedPayload(axis, payload) {
+  const response = await fetch(ledUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch (err) {
+      detail = "";
+    }
+    throw new Error(`led ${axis} ${response.status} ${detail}`.trim());
+  }
+  return response.json().catch(() => null);
+}
+
+async function pushLedState(axis, desiredState) {
+  if (ledUpdateInFlight[axis]) {
+    return;
+  }
+  const payload = buildLedDeltaPayload(axis, desiredState);
+  if (!payload) {
+    return;
+  }
+  ledUpdateInFlight[axis] = true;
+  try {
+    await postAxisLedPayload(axis, payload);
+    for (let i = 0; i < ledCount; i += 1) {
+      const nextValue = payload[`led${i}`];
+      if (nextValue !== ledUnset) {
+        ledLastSent[axis][i] = nextValue;
+      }
+    }
+  } catch (err) {
+    console.warn("led update failed", err);
+  } finally {
+    ledUpdateInFlight[axis] = false;
+  }
+}
+
+function computeDesiredLedState(nowMs) {
+  const isHomed = Number(lastApiHomed) === 1;
+  if (!isHomed && !homingActive) {
+    return computeSweepLedState(nowMs);
+  }
+  return computePositionLedState();
+}
+
+function updateLedOutputs() {
+  const desiredState = computeDesiredLedState(Date.now());
+  updateLedButtonGrid(desiredState);
+  if (apiIsOnline === false) {
+    return;
+  }
+  ledAxes.forEach((axis) => {
+    pushLedState(axis, desiredState[axis]);
+  });
+}
+
+function startLedStatusLoop() {
+  if (ledUpdateTimer) {
+    return;
+  }
+  updateLedOutputs();
+  ledUpdateTimer = window.setInterval(updateLedOutputs, 120);
+}
+
+function setupLedControls() {
+  if (!ledPanel || !ledGrid) {
+    return;
+  }
+  ledGrid.textContent = "";
+  const fragment = document.createDocumentFragment();
+  ledAxes.forEach((axis) => {
+    const row = document.createElement("div");
+    row.className = "led-row";
+    row.dataset.axis = axis;
+
+    const axisLabel = document.createElement("div");
+    axisLabel.className = "led-axis";
+    axisLabel.textContent = axis.toUpperCase();
+
+    const buttons = document.createElement("div");
+    buttons.className = "led-buttons";
+
+    for (let i = ledCount - 1; i >= 0; i -= 1) {
+      const button = document.createElement("button");
+      button.className = "led-button";
+      button.type = "button";
+      button.textContent = String(i);
+      button.dataset.axis = axis;
+      button.dataset.ledIndex = String(i);
+      setLedButtonVisual(button, axis, i, ledOffColor);
+      ledButtons[axis][i] = button;
+      buttons.append(button);
+    }
+
+    row.append(axisLabel, buttons);
+    fragment.append(row);
+  });
+  ledGrid.append(fragment);
 }
 
 function parseCoordStatusState(payload) {
@@ -1800,6 +2207,7 @@ async function fetchCoordStatusState() {
 
 function setApiStatus(isOnline) {
   const now = Date.now();
+  apiIsOnline = isOnline;
   if (isOnline) {
     if (!apiOnlineSince) {
       apiOnlineSince = now;
@@ -1895,6 +2303,7 @@ const scanDefaults = {
 };
 const scanState = {
   active: false,
+  paused: false,
   previousLockOrigin: null,
   previousDirectControl: null,
   previousRMax: null,
@@ -2094,6 +2503,9 @@ function updateHomeButtonState(homed) {
 function updateDirectControlAvailability(status, homed) {
   lastApiStatus = status;
   lastApiHomed = homed;
+  if (Number(homed) === 1) {
+    homingActive = false;
+  }
   updateHomeButtonState(homed);
   if (!directControlToggle) {
     return;
@@ -2305,19 +2717,54 @@ function getMeasurementAngleRad() {
   return getPAxisAngleRad();
 }
 
+function getMeasurementRotationRad() {
+  if (lastApiRaw && Number.isFinite(lastApiRaw.r)) {
+    return THREE.MathUtils.degToRad(rPosToDegrees(lastApiRaw.r));
+  }
+  if (rAxisInput) {
+    const rVal = Number.parseFloat(rAxisInput.value);
+    if (Number.isFinite(rVal)) {
+      return THREE.MathUtils.degToRad(rPosToDegrees(rVal));
+    }
+  }
+  return 0;
+}
+
+function rotatePointAroundYAxis(target, pivot, angleRad) {
+  if (!target || !pivot || !Number.isFinite(angleRad)) {
+    return;
+  }
+  if (angleRad === 0) {
+    return;
+  }
+  const dx = target.x - pivot.x;
+  const dz = target.z - pivot.z;
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  target.x = pivot.x + dx * cos - dz * sin;
+  target.z = pivot.z + dx * sin + dz * cos;
+}
+
 function getMeasurementBasePosition(target) {
   if (!target) {
     return null;
   }
+  let baseX = 0;
+  let baseY = 0;
   if (lastApiScene && Number.isFinite(lastApiScene.x) && Number.isFinite(lastApiScene.y)) {
-    target.set(lastApiScene.x, lastApiScene.y, 0);
-    return target;
+    baseX = lastApiScene.x;
+    baseY = lastApiScene.y;
+  } else {
+    const xLeft = xAxisInput ? Number.parseFloat(xAxisInput.value) : 0;
+    const zVal = zAxisInput ? Number.parseFloat(zAxisInput.value) : 0;
+    baseX = Number.isFinite(xLeft) ? xLeft : 0;
+    baseY = Number.isFinite(zVal) ? zVal : 0;
   }
-  const xLeft = xAxisInput ? Number.parseFloat(xAxisInput.value) : 0;
-  const zVal = zAxisInput ? Number.parseFloat(zAxisInput.value) : 0;
+  const angleRad = getMeasurementAngleRad();
+  const safeAngle = Number.isFinite(angleRad) ? angleRad : 0;
   target.set(
-    Number.isFinite(xLeft) ? xLeft : 0,
-    Number.isFinite(zVal) ? zVal : 0,
+    baseX + armLength * Math.cos(safeAngle),
+    baseY + armLength * Math.sin(safeAngle),
     0
   );
   return target;
@@ -2328,7 +2775,13 @@ function getMeasurementOrigin(target) {
     return null;
   }
   getMeasurementBasePosition(target);
-  target.add(measurementOffset);
+  const angleRad = getMeasurementAngleRad();
+  const safeAngle = Number.isFinite(angleRad) ? angleRad : 0;
+  measurementOffsetRotated.copy(measurementOffset);
+  if (safeAngle !== 0) {
+    measurementOffsetRotated.applyAxisAngle(measurementOffsetAxis, safeAngle);
+  }
+  target.add(measurementOffsetRotated);
   return target;
 }
 
@@ -2351,6 +2804,14 @@ function updateLaserGuide() {
   laserGuideLine.geometry.computeBoundingSphere();
 }
 
+function updatePointCloudRotation() {
+  if (!pointCloudGroup) {
+    return;
+  }
+  const rotationRad = getMeasurementRotationRad() * pointCloudRotationSign;
+  pointCloudGroup.rotation.y = Number.isFinite(rotationRad) ? rotationRad : 0;
+}
+
 function addPointCloudSample(rangeMm) {
   if (!Number.isFinite(rangeMm) || rangeMm <= 0) {
     return;
@@ -2366,7 +2827,13 @@ function addPointCloudSample(rangeMm) {
   getMeasurementOrigin(measurementOrigin);
   measurementDirection.set(Math.cos(angleRad), Math.sin(angleRad), 0);
   measurementEnd.copy(measurementOrigin).addScaledVector(measurementDirection, rangeMm);
-  pointCloudDummy.position.copy(measurementEnd);
+  updatePointCloudRotation();
+  measurementLocal.copy(measurementEnd);
+  if (pointCloudGroup) {
+    pointCloudGroup.updateMatrixWorld();
+    pointCloudGroup.worldToLocal(measurementLocal);
+  }
+  pointCloudDummy.position.copy(measurementLocal);
   pointCloudDummy.updateMatrix();
   pointCloudMesh.setMatrixAt(pointCloudMesh.count, pointCloudDummy.matrix);
   pointCloudMesh.count += 1;
@@ -2637,6 +3104,7 @@ const scanRotateTolerance = 10;
 const scanMoveTimeoutMs = 20000;
 const scanRotateTimeoutMs = 25000;
 const scanPollIntervalMs = 60;
+const scanPausePollIntervalMs = 120;
 
 function readScanRangeValue(inputEl, fallback) {
   if (!inputEl) {
@@ -2977,6 +3445,39 @@ function ensureRInputMax(value) {
   }
 }
 
+function updateScanActionButtons() {
+  if (scanStartButton) {
+    scanStartButton.classList.toggle("is-hidden", scanState.active);
+  }
+  if (scanRunControls) {
+    scanRunControls.classList.toggle("is-visible", scanState.active);
+  }
+  if (scanPauseButton) {
+    scanPauseButton.disabled = !scanState.active;
+    scanPauseButton.textContent = scanState.paused ? "Resume" : "Pause";
+  }
+  if (scanStopButton) {
+    scanStopButton.disabled = !scanState.active;
+  }
+}
+
+function setScanPauseState(paused) {
+  scanState.paused = paused;
+  updateScanActionButtons();
+}
+
+function stopScanSequence() {
+  if (!scanState.active) {
+    return;
+  }
+  scanState.active = false;
+  scanState.paused = false;
+  if (scanStartButton) {
+    scanStartButton.classList.remove("is-running");
+  }
+  setScanModeActive(false);
+}
+
 function setScanInputsDisabled(disabled) {
   [
     scanRadiusInput,
@@ -2995,6 +3496,9 @@ function setScanInputsDisabled(disabled) {
 function setScanModeActive(active) {
   scanState.active = active;
   if (!active) {
+    scanState.paused = false;
+  }
+  if (!active) {
     scanState.dryRun = false;
   }
   setScanInputsDisabled(active);
@@ -3005,6 +3509,7 @@ function setScanModeActive(active) {
       scanStartButton.classList.remove("is-error");
     }
   }
+  updateScanActionButtons();
   if (lockOriginInput) {
     if (active) {
       scanState.previousLockOrigin = lockOriginInput.checked;
@@ -3056,12 +3561,26 @@ function sleep(ms) {
   });
 }
 
+async function waitForScanResume() {
+  while (scanState.active && scanState.paused) {
+    await sleep(scanPausePollIntervalMs);
+  }
+  return scanState.active;
+}
+
 async function waitForMove(target, timeoutMs) {
   const start = performance.now();
   let sawActive = false;
   while (performance.now() - start < timeoutMs) {
     if (!scanState.active) {
       return false;
+    }
+    if (scanState.paused) {
+      const resumed = await waitForScanResume();
+      if (!resumed) {
+        return false;
+      }
+      continue;
     }
     let withinTolerance = false;
     if (lastApiScene) {
@@ -3091,6 +3610,13 @@ async function waitForRotation(targetR, timeoutMs) {
     if (!scanState.active) {
       return false;
     }
+    if (scanState.paused) {
+      const resumed = await waitForScanResume();
+      if (!resumed) {
+        return false;
+      }
+      continue;
+    }
     let withinTolerance = false;
     if (lastApiRaw && Number.isFinite(lastApiRaw.r)) {
       const delta = Math.abs(lastApiRaw.r - targetR);
@@ -3117,18 +3643,27 @@ async function executeWaypoint(point, currentR, rotationDirection = 1) {
   const pos = sceneToPos(point.x, point.y);
   const pDisplay = clamp(deflectionToPDisplay(deflection), -255, 255);
   if (scanState.dryRun) {
+    if (!(await waitForScanResume())) {
+      return currentR;
+    }
     setAxisInputsFromScan(point, deflection, currentR, false);
     applyDryRunState(point, deflection, currentR);
     updateScene();
     await sleep(scanPollIntervalMs);
     const nextR = currentR + rotationDirection * rAxisPosPerRev;
     ensureRInputMax(nextR);
+    if (!(await waitForScanResume())) {
+      return currentR;
+    }
     setAxisInputsFromScan(point, deflection, nextR, false);
     applyDryRunState(point, deflection, nextR);
     updateScene();
     await sleep(scanPollIntervalMs);
     recordScanStep(performance.now() - stepStart);
     return nextR;
+  }
+  if (!(await waitForScanResume())) {
+    return currentR;
   }
   const payload = {
     x: Math.round(pos.x),
@@ -3143,12 +3678,21 @@ async function executeWaypoint(point, currentR, rotationDirection = 1) {
   setAxisInputsFromScan(point, deflection, currentR);
   const reached = await waitForMove(point, scanMoveTimeoutMs);
   if (!reached) {
+    if (!scanState.active) {
+      return currentR;
+    }
     console.warn("scan waypoint move timed out", payload);
+  }
+  if (!(await waitForScanResume())) {
+    return currentR;
   }
   await sendMoveAbs(rotatePayload);
   setAxisInputsFromScan(point, deflection, nextR);
   const rotated = await waitForRotation(nextR, scanRotateTimeoutMs);
   if (!rotated) {
+    if (!scanState.active) {
+      return currentR;
+    }
     console.warn("scan rotation timed out", rotatePayload);
   }
   recordScanStep(performance.now() - stepStart);
@@ -3225,6 +3769,7 @@ function setupScanControls() {
   }
   updateScanPreview();
   updateScanProgressUI();
+  updateScanActionButtons();
   if (scanRadiusInput) {
     scanRadiusInput.addEventListener("input", updateScanPreview);
   }
@@ -3241,6 +3786,19 @@ function setupScanControls() {
   }
   if (scanStartButton) {
     scanStartButton.addEventListener("click", startScanSequence);
+  }
+  if (scanPauseButton) {
+    scanPauseButton.addEventListener("click", () => {
+      if (!scanState.active) {
+        return;
+      }
+      setScanPauseState(!scanState.paused);
+    });
+  }
+  if (scanStopButton) {
+    scanStopButton.addEventListener("click", () => {
+      stopScanSequence();
+    });
   }
 }
 
@@ -3500,6 +4058,7 @@ async function triggerHomeZ() {
     return;
   }
   homeZInFlight = true;
+  homingActive = true;
   const label = homeZButton.textContent || "Home";
   homeZButton.textContent = "Homing...";
   homeZButton.disabled = true;
@@ -3508,6 +4067,7 @@ async function triggerHomeZ() {
     homeZButton.textContent = label;
   } catch (err) {
     console.warn("home z failed", err);
+    homingActive = false;
     homeZButton.classList.add("is-error");
     homeZButton.textContent = "Home Failed";
     window.setTimeout(() => {
@@ -3962,6 +4522,7 @@ if (emergencyStopButton) {
 
 setupAxisTuningControls();
 setupDirectControlPanel();
+setupLedControls();
 setupScanControls();
 setupPointCloudControls();
 
@@ -4005,6 +4566,7 @@ handleResize();
 updateScene();
 startPosPolling();
 startApiStatusPolling();
+startLedStatusLoop();
 
 function animate(time) {
   if (!renderer) {
@@ -4018,6 +4580,7 @@ function animate(time) {
   apiGlow.material.opacity = 0.25 + pulse * 0.2;
   discHalo.material.opacity = 0.12 + pulse * 0.08;
   skyDome.position.copy(camera.position);
+  updatePointCloudRotation();
   if (coordLabelGroup.visible) {
     updateCoordLabels();
     updateScanDistanceLabel();
